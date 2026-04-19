@@ -477,6 +477,41 @@ def raw(
             sys.stdout.write("\n\n")
         sys.stdout.write(apply_vars(row[0] or "", var))
 
+@app.command(name="exec")
+def exec_entry(
+    entry_id: Optional[int] = typer.Argument(
+        None, help="Entry ID (default: latest)."
+    ),
+    var: Optional[List[str]] = typer.Option(
+        None, "--var", "-v", help="Variable substitution KEY=VALUE. Replaces {{KEY}} in body."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Print the resolved command without executing."
+    ),
+    shell: str = typer.Option(
+        "/bin/sh", "--shell", "-s", help="Shell executable to use."
+    ),
+):
+    """Execute the entry body as a shell command. Supports --var substitution and --dry-run."""
+    init_db()
+    memo_id = resolve_memo_id(entry_id)
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT content FROM memos WHERE id = ?", (memo_id,)).fetchone()
+    if not row:
+        console.print(f"[red]Error: Entry {memo_id} not found.[/red]")
+        raise typer.Exit(code=1)
+
+    content = apply_vars(row[0] or "", var)
+
+    if dry_run:
+        console.print(f"[dim]# koda exec {memo_id} (dry-run)[/dim]")
+        console.print(content)
+        return
+
+    result = subprocess.run(content, shell=True, executable=shell)
+    raise typer.Exit(code=result.returncode)
+
+
 if __name__ == "__main__":
     try:
         app()
