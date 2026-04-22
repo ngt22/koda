@@ -53,8 +53,8 @@ Each section below shows four equivalent forms:
 |---|---|
 | long | `koda exec web-srv -V localhost` |
 | built-in alias | `koda x web-srv -V localhost` |
-| kd prefix (`alias kd='koda'`) | `kd x web-srv -V localhost` |
-| two-letter alias (e.g. `alias kx='koda exec'`) | `kx web-srv -V localhost` |
+| kd prefix<br>(`alias kd='koda'`) | `kd x web-srv -V localhost` |
+| two-letter alias<br>(e.g. `alias kx='koda exec'`) | `kx web-srv -V localhost` |
 
 See [Recommended aliases](#recommended-aliases) for setup instructions.
 
