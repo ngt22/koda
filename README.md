@@ -98,68 +98,6 @@ ka "memo" -t tag -s sc                # two-letter alias
 
 ---
 
-### Execute (`exec`) — run a saved command
-
-Run a saved entry as a shell command, with optional variable substitution.
-
-```bash
-# Without koda — retype or search history every time
-ssh -i ~/.ssh/key.pem ec2-user@192.168.1.100
-
-# Save once
-koda a "ssh -i ~/.ssh/key.pem ec2-user@\$1" -t ssh -s web-srv
-```
-
-```bash
-koda x web-srv              # run by shortcut
-koda x web-srv -V prod      # with variable substitution
-koda x 12                   # run by index
-```
-
-Full form and aliases:
-
-```bash
-koda exec web-srv -V localhost   # long form
-kd x web-srv -V localhost        # kd prefix
-kx web-srv -V localhost          # two-letter alias
-```
-
-> **Security**: only store trusted commands. `exec` runs the body through the configured shell (`sh` by default).
-
----
-
-### Pick — interactive launcher (fzf)
-
-Interactively select an entry with `fzf`, then run an action. Requires [`fzf`](https://github.com/junegunn/fzf) and an interactive TTY.
-
-```bash
-koda p -x                      # pick from all entries, execute immediately
-koda p -x -q docker -t dev     # pre-filter by query and tag, then pick
-```
-
-Full form and aliases:
-
-```bash
-koda pick --exec -q docker -t dev   # long form
-kd p -x -q docker -t dev            # kd prefix
-kp -x -q docker -t dev              # two-letter alias
-```
-
-**Compound patterns — use pick as a selector:**
-
-```bash
-koda x "$(koda p -p)"          # pick IDX, pass to exec
-kd x "$(kd p -p)"              # kd prefix
-kx "$(kp -p)"                  # two-letter alias
-
-eval $(kp -p | xargs kr)       # pick IDX, eval the body
-```
-
-Other action flags: `-e` edit, `-r` raw, `-s` show.
-`-p` (print IDX only) cannot be combined with action flags.
-
----
-
 ### Raw — body-only output
 
 Print the entry body to stdout (no Rich formatting). Use for pipes, `eval`, and command substitution.
@@ -230,7 +168,34 @@ koda s 5    # → echo hello  # this is a comment
 
 ---
 
+### List
+
+```bash
+koda l                          # all entries ordered by display index
+koda l -q "docker"              # substring search on body
+koda l -t linux                 # filter by tag substring
+koda l -T archive               # exclude entries tagged "archive"
+koda l -S                       # only entries that have a shortcut
+koda l -n 50 -p 2              # 50 entries per page, page 2
+koda l -s created_at --desc     # sort by creation date descending
+```
+
+Full form and aliases:
+
+```bash
+koda list -q docker -t dev   # long form
+kd l -q docker -t dev        # kd prefix
+kl -q docker -t dev          # two-letter alias
+```
+
+Each row shows `IDX`, `UID`, `SC` (shortcut), tags, content preview, and creation time.
+Sort columns: `id`, `idx`, `uid`, `tags`, `content`, `created_at`, `modified_at`, `shortcut`.
+
+---
+
 ### Shortcuts
+
+Shortcuts and variable substitution are not subcommands — they are options (`-s`, `-V`) that work across multiple commands.
 
 Assign a memorable string alias to any entry and use it instead of a numeric index.
 
@@ -294,28 +259,84 @@ Values with spaces must be quoted so the shell passes them as a single token.
 
 ---
 
-### List
+### Execute (`exec`) — run a saved command
+
+Run a saved entry as a shell command, with optional variable substitution.
 
 ```bash
-koda l                          # all entries ordered by display index
-koda l -q "docker"              # substring search on body
-koda l -t linux                 # filter by tag substring
-koda l -T archive               # exclude entries tagged "archive"
-koda l -S                       # only entries that have a shortcut
-koda l -n 50 -p 2              # 50 entries per page, page 2
-koda l -s created_at --desc     # sort by creation date descending
+# Without koda — retype or search history every time
+ssh -i ~/.ssh/key.pem ec2-user@192.168.1.100
+
+# Save once
+koda a "ssh -i ~/.ssh/key.pem ec2-user@\$1" -t ssh -s web-srv
+```
+
+```bash
+koda x web-srv              # run by shortcut
+koda x web-srv -V prod      # with variable substitution
+koda x 12                   # run by index
 ```
 
 Full form and aliases:
 
 ```bash
-koda list -q docker -t dev   # long form
-kd l -q docker -t dev        # kd prefix
-kl -q docker -t dev          # two-letter alias
+koda exec web-srv -V localhost   # long form
+kd x web-srv -V localhost        # kd prefix
+kx web-srv -V localhost          # two-letter alias
 ```
 
-Each row shows `IDX`, `UID`, `SC` (shortcut), tags, content preview, and creation time.
-Sort columns: `id`, `idx`, `uid`, `tags`, `content`, `created_at`, `modified_at`, `shortcut`.
+> **Security**: only store trusted commands. `exec` runs the body through the configured shell (`sh` by default).
+
+---
+
+### Edit
+
+Open an entry in `$EDITOR`. The footer contains editable metadata (tags, shortcut).
+
+```bash
+koda e web-srv        # by shortcut
+koda e 5              # by index
+```
+
+Full form and aliases:
+
+```bash
+koda edit web-srv   # long form
+kd e web-srv        # kd prefix
+ke web-srv          # two-letter alias
+```
+
+---
+
+### Pick — interactive launcher (fzf)
+
+Interactively select an entry with `fzf`, then run an action. Requires [`fzf`](https://github.com/junegunn/fzf) and an interactive TTY.
+
+```bash
+koda p -x                      # pick from all entries, execute immediately
+koda p -x -q docker -t dev     # pre-filter by query and tag, then pick
+```
+
+Full form and aliases:
+
+```bash
+koda pick --exec -q docker -t dev   # long form
+kd p -x -q docker -t dev            # kd prefix
+kp -x -q docker -t dev              # two-letter alias
+```
+
+**Compound patterns — use pick as a selector:**
+
+```bash
+koda x "$(koda p -p)"          # pick IDX, pass to exec
+kd x "$(kd p -p)"              # kd prefix
+kx "$(kp -p)"                  # two-letter alias
+
+eval $(kp -p | xargs kr)       # pick IDX, eval the body
+```
+
+Other action flags: `-e` edit, `-r` raw, `-s` show.
+`-p` (print IDX only) cannot be combined with action flags.
 
 ---
 
@@ -335,25 +356,6 @@ Full form and aliases:
 koda show web-srv   # long form
 kd s web-srv        # kd prefix
 ks web-srv          # two-letter alias
-```
-
----
-
-### Edit
-
-Open an entry in `$EDITOR`. The footer contains editable metadata (tags, shortcut).
-
-```bash
-koda e web-srv        # by shortcut
-koda e 5              # by index
-```
-
-Full form and aliases:
-
-```bash
-koda edit web-srv   # long form
-kd e web-srv        # kd prefix
-ke web-srv          # two-letter alias
 ```
 
 ---
@@ -400,6 +402,27 @@ kc web-srv          # two-letter alias
 
 ---
 
+### Tag
+
+```bash
+koda t 1 3 5 -t work          # add tag to individual entries
+koda t 2-6 -t archive         # add tag to a range
+koda t 1 3-5 7 -T old         # remove tag from mixed selection
+koda t 1 -t new -T old        # add one tag and remove another in one command
+```
+
+Full form and aliases:
+
+```bash
+koda tag 1 3-5 -t archive   # long form
+kd t 1 3-5 -t archive       # kd prefix
+kt 1 3-5 -t archive         # two-letter alias
+```
+
+Re-tagging with an already-present tag is idempotent (no-op).
+
+---
+
 ### Reorder entries (`move`, `swap`, `shift`, `compact`)
 
 Each entry has a display index (`IDX`) you can freely rearrange — useful for keeping frequently used snippets at low numbers.
@@ -423,27 +446,6 @@ koda compact     kd k        kk
 ```
 
 `move` requires the destination index to be unoccupied. Use `shift` to make room first, or `swap` to exchange two occupied positions.
-
----
-
-### Batch tag (`tag`)
-
-```bash
-koda t 1 3 5 -t work          # add tag to individual entries
-koda t 2-6 -t archive         # add tag to a range
-koda t 1 3-5 7 -T old         # remove tag from mixed selection
-koda t 1 -t new -T old        # add one tag and remove another in one command
-```
-
-Full form and aliases:
-
-```bash
-koda tag 1 3-5 -t archive   # long form
-kd t 1 3-5 -t archive       # kd prefix
-kt 1 3-5 -t archive         # two-letter alias
-```
-
-Re-tagging with an already-present tag is idempotent (no-op).
 
 ---
 
