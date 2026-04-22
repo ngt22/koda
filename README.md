@@ -77,6 +77,8 @@ curl http://$(kd r):3000/healthz
 | `compact` | `k` | Reassign indices to 0..n-1 |
 | `config` | `g` | Read/write configuration |
 
+Single-letter aliases are reserved and cannot be used as entry shortcuts.
+
 ### Options
 
 | Option | Description |
@@ -102,32 +104,6 @@ uv tool install . --force
 ```
 
 ## Command reference
-
-### Built-in single-letter aliases
-
-Each subcommand has a built-in single-letter alias:
-
-```
-a add      c copy     d remove   e edit
-g config   h shift    k compact  l list
-m move     p pick     r raw      s show
-t tag      w swap     x exec
-```
-
-Single-letter aliases are reserved and cannot be used as entry shortcuts.
-
-Each section below shows these equivalent forms:
-
-| Form | Example |
-|---|---|
-| long | `koda exec web-srv -V localhost` |
-| built-in alias | `koda x web-srv -V localhost` |
-| kd prefix<br>(`alias kd='koda'`) | `kd x web-srv -V localhost` |
-| two-letter alias<br>(e.g. `alias kx='koda exec'`) | `kx web-srv -V localhost` |
-
-See [Recommended aliases](#recommended-aliases) for setup instructions.
-
----
 
 ### Add
 
