@@ -1,6 +1,6 @@
 # Koda
 
-A **memo and snippet CLI** for the terminal. Store frequently used commands, config fragments, and notes in SQLite, then pull them back instantly with `list`, `show`, and search. Built with Python, Typer, and Rich.
+A **memo and snippet CLI** for the terminal. Store shell commands, config fragments, and notes in SQLite — then search, retrieve, and run them instantly. Features interactive fuzzy-search (`pick`), in-place execution (`exec`), variable substitution at recall time, shortcut aliases, tag filtering, and shell-friendly `raw` output for scripting. Built with Python, Typer, and Rich.
 
 ## Features
 
