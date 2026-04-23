@@ -13,12 +13,25 @@ import tempfile
 import re
 import signal
 import shutil
+from contextlib import contextmanager
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import Optional, List, Callable
 from rich.console import Console
 from rich.table import Table
+
+try:
+    import libsql_experimental as _libsql
+    _LIBSQL_AVAILABLE = True
+    try:
+        _IntegrityErrors = (sqlite3.IntegrityError, _libsql.IntegrityError)
+    except AttributeError:
+        _IntegrityErrors = (sqlite3.IntegrityError,)
+except ImportError:
+    _libsql = None
+    _LIBSQL_AVAILABLE = False
+    _IntegrityErrors = (sqlite3.IntegrityError,)
 
 __app_name__ = "koda"
 __version__ = version("koda")
@@ -91,7 +104,8 @@ VALID_SORT_COLUMNS = {"id", "idx", "uid", "tags", "content", "created_at", "modi
 CONFIG_DEFAULTS: dict = {
     "defaults": {"cmd": "raw"},
     "list":     {"per_page": 20, "rows": 1, "truncate": 80, "sort_by": "idx", "desc": False},
-    "db":       {"path": str(DEFAULT_DB_PATH)},
+    "db":       {"path": str(DEFAULT_DB_PATH), "backend": "local"},
+    "turso":    {"url": "", "token": ""},
     "exec":     {"shell": "sh"},
 }
 
@@ -107,6 +121,9 @@ _CONFIG_TYPES: dict[str, type] = {
     "list.sort_by":  str,
     "list.desc":     bool,
     "db.path":       str,
+    "db.backend":    str,
+    "turso.url":     str,
+    "turso.token":   str,
     "exec.shell":    str,
 }
 
@@ -119,6 +136,7 @@ _CONFIG_VALIDATORS: dict[str, tuple[Callable, str]] = {
         lambda v: v in VALID_SORT_COLUMNS,
         f"must be one of: {', '.join(sorted(VALID_SORT_COLUMNS))}",
     ),
+    "db.backend":    (lambda v: v in ("local", "turso"), "must be 'local' or 'turso'"),
 }
 
 
@@ -153,6 +171,16 @@ def load_config() -> tuple[dict, dict]:
     if env_db:
         config["db"]["path"] = env_db
         sources["db.path"] = "env"
+
+    env_turso_url = os.getenv("KODA_TURSO_URL")
+    if env_turso_url:
+        config["turso"]["url"] = env_turso_url
+        sources["turso.url"] = "env"
+
+    env_turso_token = os.getenv("KODA_TURSO_TOKEN")
+    if env_turso_token:
+        config["turso"]["token"] = env_turso_token
+        sources["turso.token"] = "env"
 
     return config, sources
 
@@ -208,6 +236,51 @@ _config, _config_sources = load_config()
 DB_PATH = Path(_config["db"]["path"])
 
 
+@contextmanager
+def _db_connection():
+    """Context manager that yields a DB connection for the configured backend."""
+    backend = _config["db"]["backend"]
+    if backend == "turso":
+        if not _LIBSQL_AVAILABLE:
+            console.print(
+                "[red]libsql-experimental is not installed. "
+                "Run: pip install libsql-experimental[/red]"
+            )
+            raise typer.Exit(code=1)
+        url = _config["turso"]["url"]
+        token = _config["turso"]["token"]
+        if not url:
+            console.print(
+                "[red]Turso URL is not configured. "
+                "Set turso.url in config or KODA_TURSO_URL env var.[/red]"
+            )
+            raise typer.Exit(code=1)
+        conn = _libsql.connect(url, auth_token=token or None)
+        try:
+            yield conn
+        except typer.Exit:
+            raise
+        except Exception:
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            yield conn
+        except typer.Exit:
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def version_callback(value: bool):
     if value:
         console.print(f"{__app_name__} version: [bold cyan]{__version__}[/bold cyan]")
@@ -225,8 +298,9 @@ def _generate_uid(content: str, created_at: str) -> str:
 
 def init_db():
     try:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(DB_PATH) as conn:
+        if _config["db"]["backend"] == "local":
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _db_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS memos (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -247,6 +321,8 @@ def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_memos_shortcut "
                 "ON memos(shortcut) WHERE shortcut IS NOT NULL"
             )
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Database Error:[/red] {e}")
         raise typer.Exit(code=1)
@@ -294,14 +370,14 @@ def get_memos(
     )
     params.append(limit)
     params.append(offset)
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         return conn.execute(sql, params).fetchall()
 
 
 def get_memo_stats(query=None, tag=None, exclude_tag=None, shortcuts_only=False):
     where_sql, params = _build_memo_filters(query, tag, exclude_tag, shortcuts_only)
     sql = f"SELECT COUNT(*), MAX(idx) FROM memos{where_sql}"
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         total_count, max_idx = conn.execute(sql, params).fetchone()
     return total_count, max_idx
 
@@ -321,17 +397,17 @@ def get_memos_all(
         "SELECT id, uid, idx, content, tags, shortcut, created_at FROM memos"
         f"{where_sql} ORDER BY {order_column} {order_direction}, id ASC"
     )
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         return conn.execute(sql, params).fetchall()
 
 
 def delete_memo(memo_id: int) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         conn.execute("DELETE FROM memos WHERE id = ?", (memo_id,))
 
 
 def get_latest_entry():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         return conn.execute(
             "SELECT id, uid, idx, content, tags, shortcut, created_at FROM memos ORDER BY created_at DESC, id DESC LIMIT 1"
         ).fetchone()
@@ -349,7 +425,7 @@ def resolve_ref(ref: Optional[str]):
             raise typer.Exit(code=1)
         return row
     if ref.isdigit():
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_connection() as conn:
             row = conn.execute(
                 "SELECT id, uid, idx, content, tags, shortcut, created_at FROM memos WHERE idx = ?",
                 (int(ref),)
@@ -358,7 +434,7 @@ def resolve_ref(ref: Optional[str]):
             console.print(f"[yellow]No entry at index {ref}.[/yellow]")
             raise typer.Exit(code=1)
         return row
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         row = conn.execute(
             "SELECT id, uid, idx, content, tags, shortcut, created_at FROM memos WHERE shortcut = ?",
             (ref,)
@@ -498,7 +574,7 @@ def _read_stdin_refs() -> List[str]:
     if not data:
         return []
     return [part for part in data.split() if part]
-  
+
 def _pick_candidates(
     query: Optional[str],
     tag: Optional[str],
@@ -652,7 +728,7 @@ def main(
 
 def update_memo_full(memo_id: int, content: str, tags: str, shortcut: Optional[str], created_at: str):
     now = datetime.now().strftime(DATETIME_FMT)
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         conn.execute(
             "UPDATE memos SET content = ?, tags = ?, shortcut = ?, created_at = ?, modified_at = ? WHERE id = ?",
             (content.strip(), tags, shortcut or None, created_at, now, memo_id)
@@ -733,13 +809,13 @@ def _add_impl(
     now = datetime.now().strftime(DATETIME_FMT)
     uid = _generate_uid(content, now)
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_connection() as conn:
             new_idx = _next_idx(conn)
             conn.execute(
                 "INSERT INTO memos (uid, idx, shortcut, content, tags, created_at, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (uid, new_idx, shortcut or None, content, formatted_tags, now, now)
             )
-    except sqlite3.IntegrityError:
+    except _IntegrityErrors:
         console.print(f"[red]Shortcut {shortcut!r} is already in use.[/red]")
         raise typer.Exit(code=1)
 
@@ -792,7 +868,7 @@ def rm(
     if is_batch:
         if indices:
             idx_list = _parse_indices(indices)
-            with sqlite3.connect(DB_PATH) as conn:
+            with _db_connection() as conn:
                 target_rows = []
                 for idx in idx_list:
                     row = conn.execute(
@@ -804,7 +880,7 @@ def rm(
                         target_rows.append(row)
         else:
             where_sql, params = _build_memo_filters(query=query, tag=tag)
-            with sqlite3.connect(DB_PATH) as conn:
+            with _db_connection() as conn:
                 target_rows = conn.execute(
                     f"SELECT id, uid, idx, content, tags, shortcut, created_at FROM memos{where_sql} ORDER BY idx ASC",
                     params,
@@ -837,7 +913,7 @@ def rm(
                 raise typer.Exit(code=0)
 
         ids = [row[0] for row in target_rows]
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db_connection() as conn:
             conn.executemany("DELETE FROM memos WHERE id = ?", [(id_,) for id_ in ids])
         console.print(f"[red]Deleted {n} entr{'y' if n == 1 else 'ies'}.[/red]")
 
@@ -880,7 +956,7 @@ def copy(
     memo_id, uid, idx, content, tags, shortcut, created_at = row
     now = datetime.now().strftime(DATETIME_FMT)
     new_uid = _generate_uid(content, now)
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         new_idx = _next_idx(conn)
         conn.execute(
             "INSERT INTO memos (uid, idx, shortcut, content, tags, created_at, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -936,7 +1012,7 @@ def edit(
 
             try:
                 update_memo_full(memo_id, new_content, new_tags, new_shortcut, new_created_at)
-            except sqlite3.IntegrityError:
+            except _IntegrityErrors:
                 console.print(f"[red]Shortcut {new_shortcut!r} is already in use.[/red]")
                 raise typer.Exit(code=1)
             console.print(f"[green]Entry [{idx}] updated.[/green]")
@@ -1182,7 +1258,7 @@ def show(
 ):
 
     """Print one entry with index, uid, tags, and timestamps (Rich formatted). Alias: `koda s`.
-    
+
     When no argument is given, this command also accepts one ref from stdin.
     """
     if ref is None:
@@ -1286,7 +1362,7 @@ def tag(
     remove_list = _parse_tag_args(untag)
 
     updated = 0
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         for idx in idx_list:
             row = conn.execute("SELECT id, tags FROM memos WHERE idx = ?", (idx,)).fetchone()
             if row is None:
@@ -1317,7 +1393,7 @@ def move(
     init_db()
     if from_idx == to_idx:
         return
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         if conn.execute("SELECT 1 FROM memos WHERE idx = ?", (from_idx,)).fetchone() is None:
             console.print(f"[red]No entry at index {from_idx}.[/red]")
             raise typer.Exit(code=1)
@@ -1341,7 +1417,7 @@ def shift_cmd(
     init_db()
     if count == 0:
         return
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         if count < 0:
             if start + count < 0:
                 console.print(
@@ -1378,7 +1454,7 @@ def swap(
     init_db()
     if idx1 == idx2:
         return
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         a = conn.execute("SELECT id FROM memos WHERE idx = ?", (idx1,)).fetchone()
         b = conn.execute("SELECT id FROM memos WHERE idx = ?", (idx2,)).fetchone()
         if a is None:
@@ -1398,7 +1474,7 @@ def swap(
 def compact_indices():
     """Fill index gaps by reassigning idx to contiguous values from 0. Alias: `koda k`."""
     init_db()
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db_connection() as conn:
         rows = conn.execute("SELECT id, idx FROM memos ORDER BY idx ASC, id ASC").fetchall()
         if not rows:
             console.print("[yellow]No entries in database.[/yellow]")
@@ -1453,7 +1529,8 @@ def config_show(ctx: typer.Context) -> None:
             val = _config[sec][subkey]
             src = _config_sources.get(dotkey, "default")
             label = src_labels.get(src, "[dim]default[/dim]")
-            console.print(f"  {dotkey:<{key_width}} = {str(val):<24} {label}")
+            display_val = "****" if dotkey == "turso.token" and val else str(val)
+            console.print(f"  {dotkey:<{key_width}} = {display_val:<24} {label}")
 
 
 @config_app.command("get")
@@ -1561,7 +1638,11 @@ def config_edit_cmd() -> None:
             '# sort_by = "idx"\n'
             "# desc = false\n\n"
             "# [db]\n"
-            f'# path = "{DEFAULT_DB_PATH}"\n\n'
+            f'# path = "{DEFAULT_DB_PATH}"\n'
+            '# backend = "local"   # "local" or "turso"\n\n'
+            "# [turso]\n"
+            '# url = "libsql://your-db.turso.io"   # or set KODA_TURSO_URL\n'
+            '# token = "your-auth-token"            # or set KODA_TURSO_TOKEN\n\n'
             "# [exec]\n"
             '# shell = "sh"\n'
         )
