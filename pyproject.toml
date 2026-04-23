@@ -1,7 +1,7 @@
 [project]
 name = "koda"
-version = "1.0.2"
-description = "Koda: A fast CLI for memos and terminal snippets."
+version = "1.1.0"
+description = "A fast CLI memo store and command launcher backed by SQLite or Turso."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -23,6 +23,9 @@ dependencies = [
     "typer>=0.12.3",
     "rich>=13.7.1",
 ]
+
+[project.optional-dependencies]
+turso = ["libsql-experimental>=0.0.1"]
 
 [project.urls]
 Homepage = "https://github.com/ngt22/koda"

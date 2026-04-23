@@ -13,6 +13,7 @@ A **memo and snippet CLI** for the terminal. Store frequently used commands, con
 - **Display index**: Each entry has a stable `uid` (sha1 short hash) and a user-controlled `idx`. Reorder freely with `move`/`swap`, and close gaps with `compact`.
 - **XDG-friendly**: Default data under `~/.local/share/koda/`, config under `~/.config/koda/`.
 - **Configurable defaults**: Persist preferences like default command or list page size in `~/.config/koda/config.toml`.
+- **Turso support**: Switch from local SQLite to a [Turso](https://turso.tech) remote database to share entries across machines.
 
 ## Installation
 
@@ -427,6 +428,11 @@ desc = false      # sort direction
 
 [db]
 path = "~/.local/share/koda/koda.db"
+backend = "local"   # "local" or "turso"
+
+[turso]
+url = "libsql://your-db.turso.io"   # Turso database URL
+token = "your-auth-token"           # Auth token (prefer KODA_TURSO_TOKEN env var)
 
 [exec]
 shell = "sh"      # shell used by `exec`
@@ -454,7 +460,56 @@ Priority order: **CLI flags > environment variables > config file > built-in def
 | `KODA_DB_PATH`     | Override database file path |
 | `KODA_DEFAULT_CMD` | Override `defaults.cmd` for this session |
 | `KODA_CONFIG_PATH` | Override config file path |
+| `KODA_TURSO_URL`   | Turso database URL (overrides `turso.url` in config) |
+| `KODA_TURSO_TOKEN` | Turso auth token (overrides `turso.token` in config) |
 | `EDITOR`           | Editor for `add`, `edit`, and `config edit` (default: `vim`) |
+
+## Turso (remote database)
+
+Koda supports [Turso](https://turso.tech) as a remote backend, letting you share entries across machines.
+
+### Setup
+
+1. Install the optional dependency:
+
+```bash
+pip install libsql-experimental
+# or with uv:
+uv tool install "koda[turso]"
+```
+
+2. Create a Turso database and get your URL and token from the [Turso dashboard](https://app.turso.tech) or CLI:
+
+```bash
+turso db create koda
+turso db show koda --url
+turso db tokens create koda
+```
+
+3. Configure Koda (use env vars to keep the token out of the config file):
+
+```bash
+export KODA_TURSO_URL="libsql://your-db.turso.io"
+export KODA_TURSO_TOKEN="your-auth-token"
+koda config set db.backend turso
+```
+
+Or write both to the config file:
+
+```bash
+koda config set db.backend turso
+koda config set turso.url "libsql://your-db.turso.io"
+koda config set turso.token "your-auth-token"
+```
+
+### Switching between backends
+
+```bash
+koda config set db.backend turso   # use Turso
+koda config set db.backend local   # use local SQLite (default)
+```
+
+The local SQLite database (`db.path`) and the Turso database are independent — switching backends does not migrate data.
 
 ## License
 
