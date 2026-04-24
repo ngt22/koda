@@ -117,7 +117,7 @@ Single-letter aliases are reserved and cannot be used as entry shortcuts.
 ## Installation
 
 ```bash
-git clone https://github.com/ngt22/koda.git
+git clone https://github.com/ngt22/koda-cli.git
 cd koda
 uv tool install .
 ```

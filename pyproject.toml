@@ -1,5 +1,5 @@
 [project]
-name = "koda"
+name = "koda-cli"
 version = "1.2.0"
 description = "A fast CLI memo store and command launcher backed by SQLite or Turso."
 readme = "README.md"
@@ -28,9 +28,9 @@ dependencies = [
 turso = ["libsql-experimental>=0.0.1"]
 
 [project.urls]
-Homepage = "https://github.com/ngt22/koda"
-Repository = "https://github.com/ngt22/koda.git"
-Issues = "https://github.com/ngt22/koda/issues"
+Homepage = "https://github.com/ngt22/koda-cli"
+Repository = "https://github.com/ngt22/koda-cli.git"
+Issues = "https://github.com/ngt22/koda-cli/issues"
 
 [project.scripts]
 koda = "koda.main:app"
