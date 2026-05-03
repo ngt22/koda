@@ -117,17 +117,29 @@ Single-letter aliases are reserved and cannot be used as entry shortcuts.
 ## Installation
 
 ```bash
-git clone https://github.com/ngt22/koda-cli.git
-cd koda
-uv tool install .
+# uv (recommended)
+uv tool install "koda-cli @ git+https://github.com/ngt22/koda-cli.git"
+
+# pipx
+pipx install "git+https://github.com/ngt22/koda-cli.git"
+```
+
+Turso remote backend (optional):
+
+```bash
+uv tool install "koda-cli[turso] @ git+https://github.com/ngt22/koda-cli.git"
+# or
+pipx install "git+https://github.com/ngt22/koda-cli.git" --pip-args ".[turso]"
 ```
 
 ## Update
 
 ```bash
-cd koda
-git pull
-uv tool install . --force
+# uv
+uv tool upgrade koda-cli
+
+# pipx
+pipx upgrade koda-cli
 ```
 
 ## Command reference
@@ -673,6 +685,11 @@ backend = "local"   # "local" or "turso"
 url = "libsql://your-db.turso.io"   # Turso database URL
 token = "your-auth-token"           # Auth token (prefer KODA_TURSO_TOKEN env var)
 
+[git]
+sync_path = "~/koda-sync"           # local clone of the sync repository
+payload_file = "koda-sync.jsonl"    # JSONL file inside sync_path
+sync_format = "jsonl"               # wire format (jsonl only)
+
 [exec]
 shell = "sh"      # shell used by exec
 ```
@@ -686,9 +703,12 @@ Priority order: **CLI flags > environment variables > config file > built-in def
 | `KODA_DB_PATH` | Override database file path |
 | `KODA_DEFAULT_CMD` | Override `defaults.cmd` for this session |
 | `KODA_CONFIG_PATH` | Override config file path |
-| `KODA_TURSO_URL`   | Turso database URL (overrides `turso.url` in config) |
-| `KODA_TURSO_TOKEN` | Turso auth token (overrides `turso.token` in config) |
-| `EDITOR`           | Editor for `add`, `edit`, and `config edit` (default: `vim`) |
+| `KODA_TURSO_URL`        | Turso database URL (overrides `turso.url` in config) |
+| `KODA_TURSO_TOKEN`      | Turso auth token (overrides `turso.token` in config) |
+| `KODA_GIT_SYNC_PATH`    | Path to the local Git sync clone (overrides `git.sync_path`) |
+| `KODA_GIT_PAYLOAD_FILE` | JSONL file name inside the sync clone (overrides `git.payload_file`) |
+| `KODA_GIT_SYNC_FORMAT`  | Sync wire format — `jsonl` (overrides `git.sync_format`) |
+| `EDITOR`                | Editor for `add`, `edit`, and `config edit` (default: `vim`) |
 
 ## Turso (remote database)
 
@@ -736,6 +756,92 @@ koda config set db.backend local   # use local SQLite (default)
 ```
 
 The local SQLite database (`db.path`) and the Turso database are independent — switching backends does not migrate data.
+
+## Git sync (multi-machine sharing via GitHub)
+
+Koda supports syncing entries across machines using a Git repository (e.g. a private GitHub repo) as a transport. On push, Koda exports the local database as a JSON Lines file (`koda-sync.jsonl`) into a local clone, commits it, and pushes to the remote. On pull, it fetches the latest commit and merges entries into the local database by `uid` and `modified_at` — newer wins, no entry is deleted.
+
+This works independently of the Turso backend. You can use Git sync with the default local SQLite database.
+
+### Setup
+
+**1. Create a sync repository on GitHub (private recommended):**
+
+```bash
+# Create the repo on GitHub, then clone it locally
+git clone git@github.com:YOUR_USERNAME/koda-sync.git ~/koda-sync
+```
+
+**2. Point Koda at the clone:**
+
+```bash
+koda config set git.sync_path ~/koda-sync
+```
+
+The `koda-sync` directory is the local clone root. Koda creates `koda-sync.jsonl` inside it automatically on first push.
+
+**3. Confirm the configuration:**
+
+```bash
+koda config get git.sync_path      # → ~/koda-sync
+koda config get git.payload_file   # → koda-sync.jsonl  (default)
+koda config get git.sync_format    # → jsonl            (default)
+```
+
+### Push and pull
+
+```bash
+koda push   # export DB → koda-sync.jsonl, commit, push to remote
+koda pull   # git pull the clone, merge koda-sync.jsonl into local DB
+```
+
+`push` does a `git pull --rebase` before writing the payload so the branch stays linear. `pull` merges by `uid` — entries that already exist locally are updated only if the incoming `modified_at` is newer.
+
+### Setting up a second machine
+
+```bash
+# On the new machine: clone the sync repo
+git clone git@github.com:YOUR_USERNAME/koda-sync.git ~/koda-sync
+
+# Point Koda at it
+koda config set git.sync_path ~/koda-sync
+
+# Import the shared entries
+koda pull
+```
+
+### Specifying a different remote
+
+Koda resolves the remote automatically: it picks `origin` if available, otherwise the first listed remote. To use a different remote, set it as `origin` in the clone:
+
+```bash
+git -C ~/koda-sync remote set-url origin git@github.com:YOUR_USERNAME/koda-sync.git
+```
+
+Or add a named remote and set it as the tracking upstream for your branch:
+
+```bash
+git -C ~/koda-sync remote add work git@github.com:YOUR_ORG/koda-sync.git
+git -C ~/koda-sync branch --set-upstream-to=work/main main
+```
+
+When an upstream is set for the current branch, Koda uses it directly (`git pull --rebase` / `git push`). When no upstream is configured, Koda calls `git push -u <remote> <branch>` to set one automatically on the first push.
+
+### Configuration reference
+
+| Key | Default | Description |
+|---|---|---|
+| `git.sync_path` | *(empty)* | Path to the local clone of the sync repository |
+| `git.payload_file` | `koda-sync.jsonl` | JSONL file path, relative to `git.sync_path` |
+| `git.sync_format` | `jsonl` | Wire format — only `jsonl` is supported |
+
+Environment variable overrides:
+
+| Variable | Purpose |
+|---|---|
+| `KODA_GIT_SYNC_PATH` | Override `git.sync_path` |
+| `KODA_GIT_PAYLOAD_FILE` | Override `git.payload_file` |
+| `KODA_GIT_SYNC_FORMAT` | Override `git.sync_format` |
 
 ## License
 
