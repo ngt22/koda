@@ -119,8 +119,13 @@ CONFIG_DEFAULTS: dict = {
     "list":     {"per_page": 20, "rows": 1, "truncate": 80, "sort_by": "idx", "desc": False, "columns": ["idx", "sc", "tags", "content"]},
     "db":       {"path": str(DEFAULT_DB_PATH), "backend": "local"},
     "turso":    {"url": "", "token": ""},
+    # Git sync: local clone root, JSONL payload path (relative), and wire format key.
+    # One UTF-8 line per memo, JSON object, sorted by uid on export. For sharing across machines, not merge workflows.
+    "git":      {"sync_path": "", "payload_file": "koda-memos.jsonl", "sync_format": "jsonl"},
     "exec":     {"shell": "sh"},
 }
+
+GIT_SYNC_FORMAT_JSONL = "jsonl"
 
 _ALL_KEYS: set[str] = {
     f"{sec}.{k}" for sec, vals in CONFIG_DEFAULTS.items() for k in vals
@@ -138,6 +143,9 @@ _CONFIG_TYPES: dict[str, type] = {
     "db.backend":    str,
     "turso.url":     str,
     "turso.token":   str,
+    "git.sync_path": str,
+    "git.payload_file": str,
+    "git.sync_format": str,
     "exec.shell":    str,
 }
 
@@ -160,6 +168,20 @@ _CONFIG_VALIDATORS: dict[str, tuple[Callable, str]] = {
         f'must include "idx"; available: {", ".join(VALID_LIST_COLUMNS)}',
     ),
     "db.backend":    (lambda v: v in ("local", "turso"), "must be 'local' or 'turso'"),
+    "git.sync_path": (lambda v: True, ""),
+    "git.payload_file": (
+        lambda v: (
+            isinstance(v, str)
+            and len(v.strip()) > 0
+            and not Path(v).is_absolute()
+            and ".." not in Path(v).parts
+        ),
+        "must be a non-empty path relative to git.sync_path without '..' components",
+    ),
+    "git.sync_format": (
+        lambda v: str(v).strip().lower() == GIT_SYNC_FORMAT_JSONL,
+        f"must be {GIT_SYNC_FORMAT_JSONL!r} (case-insensitive)",
+    ),
 }
 
 
@@ -204,6 +226,21 @@ def load_config() -> tuple[dict, dict]:
     if env_turso_token:
         config["turso"]["token"] = env_turso_token
         sources["turso.token"] = "env"
+
+    env_git_sync = os.getenv("KODA_GIT_SYNC_PATH")
+    if env_git_sync:
+        config["git"]["sync_path"] = env_git_sync
+        sources["git.sync_path"] = "env"
+
+    env_git_payload = os.getenv("KODA_GIT_PAYLOAD_FILE")
+    if env_git_payload:
+        config["git"]["payload_file"] = env_git_payload
+        sources["git.payload_file"] = "env"
+
+    env_git_format = os.getenv("KODA_GIT_SYNC_FORMAT")
+    if env_git_format:
+        config["git"]["sync_format"] = env_git_format.strip().lower()
+        sources["git.sync_format"] = "env"
 
     return config, sources
 
@@ -1431,6 +1468,336 @@ def tag(
     console.print(f"[green]{'; '.join(parts)}.[/green]")
 
 
+
+def _require_git_cli() -> None:
+    if shutil.which("git") is None:
+        console.print("[red]git not found. Install Git and ensure it is on PATH.[/red]")
+        raise typer.Exit(code=1)
+
+
+def _resolve_git_sync_root() -> Path:
+    raw = (_config["git"]["sync_path"] or "").strip()
+    if not raw:
+        console.print(
+            "[red]git.sync_path is empty. Set [git] sync_path in config or KODA_GIT_SYNC_PATH "
+            "(path to your local clone of the sync repository).[/red]"
+        )
+        raise typer.Exit(code=1)
+    root = Path(raw).expanduser().resolve()
+    if not root.is_dir():
+        console.print(f"[red]git.sync_path is not a directory: {root}[/red]")
+        raise typer.Exit(code=1)
+    return root
+
+
+def _resolve_git_payload_path(sync_root: Path) -> Path:
+    rel = (_config["git"]["payload_file"] or "").strip()
+    if not rel:
+        rel = "koda-memos.jsonl"
+    rel_path = Path(rel)
+    payload = (sync_root / rel_path).resolve()
+    try:
+        payload.relative_to(sync_root)
+    except ValueError:
+        console.print("[red]git.payload_file must stay inside git.sync_path.[/red]")
+        raise typer.Exit(code=1)
+    return payload
+
+
+def _ensure_git_worktree(sync_root: Path) -> None:
+    r = subprocess.run(
+        ["git", "-C", str(sync_root), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0 or (r.stdout or "").strip() != "true":
+        console.print(f"[red]Not a Git working tree: {sync_root}[/red]")
+        raise typer.Exit(code=1)
+
+
+def _git_has_remote(sync_root: Path) -> bool:
+    r = subprocess.run(
+        ["git", "-C", str(sync_root), "remote"],
+        capture_output=True,
+        text=True,
+    )
+    return bool((r.stdout or "").strip())
+
+
+def _git_pull_rebase_if_remote(sync_root: Path) -> None:
+    if not _git_has_remote(sync_root):
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", str(sync_root), "pull", "--rebase"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print(
+            "[red]git pull --rebase failed in the sync clone. Resolve conflicts there, then retry.[/red]"
+        )
+        if e.stderr:
+            console.print(f"[dim]{e.stderr.strip()}[/dim]")
+        raise typer.Exit(code=1)
+
+
+def _git_push_if_remote(sync_root: Path) -> None:
+    if not _git_has_remote(sync_root):
+        console.print("[yellow]No Git remotes configured; payload committed locally only (skipping push).[/yellow]")
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", str(sync_root), "push"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print("[red]git push failed. Configure upstream/remotes or run push from that clone manually.[/red]")
+        if e.stderr:
+            console.print(f"[dim]{e.stderr.strip()}[/dim]")
+        raise typer.Exit(code=1)
+
+
+def _require_git_sync_wire_format() -> None:
+    fmt = (_config["git"].get("sync_format") or "").strip().lower()
+    if fmt != GIT_SYNC_FORMAT_JSONL:
+        console.print(
+            f"[red]git.sync_format must be {GIT_SYNC_FORMAT_JSONL!r} (JSON Lines). "
+            f"Set git.sync_format or KODA_GIT_SYNC_FORMAT.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+
+def _parse_memo_datetime(s: Optional[str]) -> datetime:
+    if not s or not str(s).strip():
+        return datetime.min.replace(microsecond=0)
+    try:
+        return datetime.strptime(str(s).strip(), DATETIME_FMT)
+    except ValueError:
+        return datetime.min.replace(microsecond=0)
+
+
+def _parse_git_sync_record(raw: object, lineno: int) -> dict:
+    """Validate one JSON object from the sync file; raise ValueError with line number on failure."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"line {lineno}: each non-empty line must be a JSON object")
+    uid = raw.get("uid")
+    if not uid or not isinstance(uid, str):
+        raise ValueError(f"line {lineno}: missing or invalid string field 'uid'")
+    if "idx" not in raw:
+        raise ValueError(f"line {lineno}: missing field 'idx'")
+    try:
+        idx = int(raw["idx"])
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"line {lineno}: 'idx' must be an integer") from e
+    content = raw.get("content", "")
+    if content is None:
+        content = ""
+    elif not isinstance(content, str):
+        content = str(content)
+    tags = raw.get("tags", "")
+    if tags is None:
+        tags = ""
+    elif not isinstance(tags, str):
+        tags = str(tags)
+    created_at = raw.get("created_at", "")
+    if created_at is None:
+        created_at = ""
+    else:
+        created_at = str(created_at).strip()
+    modified_at = raw.get("modified_at")
+    if modified_at is None or (isinstance(modified_at, str) and not str(modified_at).strip()):
+        modified_at = created_at
+    else:
+        modified_at = str(modified_at).strip()
+    sc = raw.get("shortcut", None)
+    if sc is not None and sc != "":
+        sc = str(sc)
+    else:
+        sc = None
+    return {
+        "uid": uid,
+        "idx": idx,
+        "shortcut": sc,
+        "content": content,
+        "tags": tags,
+        "created_at": created_at,
+        "modified_at": modified_at,
+    }
+
+
+def _dump_git_sync_payload() -> bytes:
+    """Export memos as UTF-8 JSON Lines, one object per line, sorted by uid (stable share format)."""
+    _require_git_sync_wire_format()
+    with _db_connection() as conn:
+        rows = conn.execute(
+            "SELECT uid, idx, shortcut, content, tags, created_at, modified_at "
+            "FROM memos ORDER BY uid ASC, id ASC"
+        ).fetchall()
+    memos: List[dict] = []
+    for uid, idx, shortcut, content, tags, created_at, modified_at in rows:
+        ca = created_at or ""
+        ma = modified_at if modified_at else (ca or "")
+        memos.append(
+            {
+                "uid": uid,
+                "idx": idx,
+                "shortcut": shortcut,
+                "content": content if content is not None else "",
+                "tags": tags if tags is not None else "",
+                "created_at": ca,
+                "modified_at": ma,
+            }
+        )
+    memos.sort(key=lambda m: m["uid"])
+    lines = [
+        json.dumps(m, ensure_ascii=False, sort_keys=True, separators=(",", ":")) for m in memos
+    ]
+    body = "\n".join(lines)
+    return (body + "\n").encode("utf-8") if body else b""
+
+
+def _load_git_sync_payload(data: bytes) -> List[dict]:
+    _require_git_sync_wire_format()
+    if not data.strip():
+        return []
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"sync file is not valid UTF-8: {e}") from e
+    by_uid: dict[str, dict] = {}
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"line {lineno}: invalid JSON ({e})") from e
+        rec = _parse_git_sync_record(obj, lineno)
+        by_uid[rec["uid"]] = rec
+    return sorted(by_uid.values(), key=lambda m: m["uid"])
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _shortcut_usable(conn, uid: str, shortcut: Optional[str]) -> Optional[str]:
+    if shortcut is None or shortcut == "":
+        return shortcut
+    row = conn.execute("SELECT uid FROM memos WHERE shortcut = ?", (shortcut,)).fetchone()
+    if row is None or row[0] == uid:
+        return shortcut
+    return None
+
+
+def _pick_idx(conn, preferred: int) -> int:
+    if conn.execute("SELECT 1 FROM memos WHERE idx = ?", (preferred,)).fetchone() is None:
+        return preferred
+    return _next_idx(conn)
+
+
+def _apply_idx_for_row(conn, memo_id: int, preferred: int) -> None:
+    occ = conn.execute(
+        "SELECT id FROM memos WHERE idx = ? AND id != ?",
+        (preferred, memo_id),
+    ).fetchone()
+    if occ is None:
+        conn.execute("UPDATE memos SET idx = ? WHERE id = ?", (preferred, memo_id))
+    else:
+        conn.execute("UPDATE memos SET idx = ? WHERE id = ?", (_next_idx(conn), memo_id))
+
+
+def _merge_remote_sync_entries(entries: List[dict]) -> tuple[int, int, int, int]:
+    """Returns (inserted, updated, skipped, shortcut_dropped)."""
+    inserted = updated = skipped = shortcut_dropped = 0
+    with _db_connection() as conn:
+        for rm in sorted(
+            entries,
+            key=lambda m: (
+                _parse_memo_datetime(m.get("modified_at")) or _parse_memo_datetime(m.get("created_at")),
+                str(m.get("uid") or ""),
+            ),
+        ):
+            uid = rm.get("uid")
+            if not uid or not isinstance(uid, str):
+                skipped += 1
+                continue
+            try:
+                want_idx = int(rm["idx"])
+            except (KeyError, TypeError, ValueError):
+                skipped += 1
+                continue
+            content = rm.get("content") if rm.get("content") is not None else ""
+            tags = rm.get("tags") if rm.get("tags") is not None else ""
+            created_at = str(rm.get("created_at") or "").strip() or datetime.now().strftime(DATETIME_FMT)
+            modified_at = str(rm.get("modified_at") or "").strip() or created_at
+            raw_sc = rm.get("shortcut")
+            sc = raw_sc if raw_sc is None or raw_sc == "" else str(raw_sc)
+
+            r_ts = _parse_memo_datetime(modified_at) or _parse_memo_datetime(created_at)
+            local = conn.execute(
+                "SELECT id, idx, shortcut, content, tags, created_at, modified_at FROM memos WHERE uid = ?",
+                (uid,),
+            ).fetchone()
+            if local is None:
+                pick_idx = _pick_idx(conn, want_idx)
+                use_sc = _shortcut_usable(conn, uid, sc)
+                if use_sc is None and sc:
+                    shortcut_dropped += 1
+                try:
+                    conn.execute(
+                        "INSERT INTO memos (uid, idx, shortcut, content, tags, created_at, modified_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (uid, pick_idx, use_sc, content, tags, created_at, modified_at),
+                    )
+                    inserted += 1
+                except _IntegrityErrors:
+                    pick_idx = _next_idx(conn)
+                    try:
+                        conn.execute(
+                            "INSERT INTO memos (uid, idx, shortcut, content, tags, created_at, modified_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (uid, pick_idx, use_sc, content, tags, created_at, modified_at),
+                        )
+                        inserted += 1
+                    except _IntegrityErrors:
+                        conn.execute(
+                            "INSERT INTO memos (uid, idx, shortcut, content, tags, created_at, modified_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (uid, pick_idx, None, content, tags, created_at, modified_at),
+                        )
+                        inserted += 1
+                        if use_sc:
+                            shortcut_dropped += 1
+                continue
+
+            memo_id = local[0]
+            l_created, l_modified = local[5], local[6]
+            l_ts = _parse_memo_datetime(l_modified) or _parse_memo_datetime(l_created)
+            if r_ts <= l_ts:
+                skipped += 1
+                continue
+
+            use_sc = _shortcut_usable(conn, uid, sc)
+            if use_sc is None and sc:
+                shortcut_dropped += 1
+            _apply_idx_for_row(conn, memo_id, want_idx)
+            conn.execute(
+                "UPDATE memos SET shortcut = ?, content = ?, tags = ?, created_at = ?, modified_at = ? WHERE id = ?",
+                (use_sc, content, tags, created_at, modified_at, memo_id),
+            )
+            updated += 1
+    return inserted, updated, skipped, shortcut_dropped
+
+
 @app.command(name="move")
 def move(
     from_idx: int = typer.Argument(..., help="Source display index."),
@@ -1453,6 +1820,104 @@ def move(
             raise typer.Exit(code=1)
         conn.execute("UPDATE memos SET idx = ? WHERE idx = ?", (to_idx, from_idx))
     console.print(f"[green]Moved {from_idx} → {to_idx}.[/green]")
+
+
+@app.command()
+def push(
+    payload_file: Optional[Path] = typer.Option(
+        None, "--file", help="Use this JSONL file instead of exporting the local database."
+    ),
+):
+    """Write memo export (JSON Lines, uid-sorted) into the Git clone, commit, and push. Alias: `koda push`."""
+    init_db()
+    _require_git_sync_wire_format()
+    _require_git_cli()
+    sync_root = _resolve_git_sync_root()
+    _ensure_git_worktree(sync_root)
+    payload_path = _resolve_git_payload_path(sync_root)
+    rel = payload_path.relative_to(sync_root).as_posix()
+
+    if payload_file is not None:
+        if not payload_file.is_file():
+            console.print(f"[red]--file does not exist: {payload_file}[/red]")
+            raise typer.Exit(code=1)
+        data = payload_file.read_bytes()
+        try:
+            _ = _load_git_sync_payload(data)
+        except Exception as e:
+            console.print(f"[red]Invalid sync payload: {e}[/red]")
+            raise typer.Exit(code=1)
+    else:
+        data = _dump_git_sync_payload()
+
+    _git_pull_rebase_if_remote(sync_root)
+
+    _atomic_write_bytes(payload_path, data)
+    subprocess.run(["git", "-C", str(sync_root), "add", "-f", rel], check=True)
+    chk = subprocess.run(["git", "-C", str(sync_root), "diff", "--cached", "--quiet"])
+    if chk.returncode == 0:
+        console.print("[yellow]Payload unchanged — nothing to commit.[/yellow]")
+        _git_push_if_remote(sync_root)
+        console.print("[green]Push complete.[/green]")
+        return
+
+    try:
+        subprocess.run(
+            ["git", "-C", str(sync_root), "commit", "-m", "koda: sync memo payload"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print(
+            "[red]git commit failed. Resolve working tree issues in the sync clone and retry.[/red]"
+        )
+        if e.stderr:
+            console.print(f"[dim]{e.stderr.strip()}[/dim]")
+        raise typer.Exit(code=1)
+    _git_push_if_remote(sync_root)
+
+    console.print(f"[green]Synced payload to Git: {payload_path}[/green]")
+
+
+@app.command()
+def pull(
+    local_payload_path: Optional[Path] = typer.Option(
+        None, "--file", help="Import from this JSONL file (skip git pull in the clone)."
+    ),
+):
+    """Pull memo JSONL from the Git clone (--file skips git); merge into local DB (uid + modified_at). Alias: `koda pull`."""
+    init_db()
+    _require_git_sync_wire_format()
+    if local_payload_path is not None:
+        if not local_payload_path.is_file():
+            console.print(f"[red]--file does not exist: {local_payload_path}[/red]")
+            raise typer.Exit(code=1)
+        data = local_payload_path.read_bytes()
+    else:
+        _require_git_cli()
+        sync_root = _resolve_git_sync_root()
+        _ensure_git_worktree(sync_root)
+        payload_path = _resolve_git_payload_path(sync_root)
+        _git_pull_rebase_if_remote(sync_root)
+        if not payload_path.is_file():
+            console.print(f"[red]Payload file missing after pull: {payload_path}[/red]")
+            raise typer.Exit(code=1)
+        data = payload_path.read_bytes()
+
+    try:
+        rows = _load_git_sync_payload(data)
+    except Exception as e:
+        console.print(f"[red]Invalid sync payload: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    ins, upd, skp, dsc = _merge_remote_sync_entries(rows)
+    tail = f", [yellow]{dsc}[/yellow] shortcut(s) dropped (conflicts with local shortcuts)" if dsc else ""
+    console.print(
+        f"merged remote memos: [cyan]{ins}[/cyan] inserted, [cyan]{upd}[/cyan] updated, "
+        f"[dim]{skp}[/dim] skipped (older or invalid entries){tail}."
+    )
+    console.print("[green]Pull complete.[/green]")
 
 
 @app.command(name="shift")
@@ -1690,6 +2155,10 @@ def config_edit_cmd() -> None:
             "# [turso]\n"
             '# url = "libsql://your-db.turso.io"   # or set KODA_TURSO_URL\n'
             '# token = "your-auth-token"            # or set KODA_TURSO_TOKEN\n\n'
+            "# [git]\n"
+            '# sync_path = "/path/to/koda-sync-repo"    # clone root, or use KODA_GIT_SYNC_PATH\n'
+            '# payload_file = "koda-memos.jsonl"         # relative to sync_path (JSON Lines)\n'
+            '# sync_format = "jsonl"                     # or KODA_GIT_SYNC_FORMAT\n\n'
             "# [exec]\n"
             '# shell = "sh"\n'
         )
