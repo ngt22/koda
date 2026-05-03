@@ -121,7 +121,7 @@ CONFIG_DEFAULTS: dict = {
     "turso":    {"url": "", "token": ""},
     # Git sync: local clone root, JSONL payload path (relative), and wire format key.
     # One UTF-8 line per memo, JSON object, sorted by uid on export. For sharing across machines, not merge workflows.
-    "git":      {"sync_path": "", "payload_file": "koda-memos.jsonl", "sync_format": "jsonl"},
+    "git":      {"sync_path": "", "payload_file": "koda-sync.jsonl", "sync_format": "jsonl"},
     "exec":     {"shell": "sh"},
 }
 
@@ -1493,7 +1493,7 @@ def _resolve_git_sync_root() -> Path:
 def _resolve_git_payload_path(sync_root: Path) -> Path:
     rel = (_config["git"]["payload_file"] or "").strip()
     if not rel:
-        rel = "koda-memos.jsonl"
+        rel = "koda-sync.jsonl"
     rel_path = Path(rel)
     payload = (sync_root / rel_path).resolve()
     try:
@@ -1524,12 +1524,65 @@ def _git_has_remote(sync_root: Path) -> bool:
     return bool((r.stdout or "").strip())
 
 
+def _git_preferred_remote(sync_root: Path) -> Optional[str]:
+    r = subprocess.run(
+        ["git", "-C", str(sync_root), "remote"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    names = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+    if not names:
+        return None
+    if "origin" in names:
+        return "origin"
+    return names[0]
+
+
+def _git_branch_show_current(sync_root: Path) -> Optional[str]:
+    r = subprocess.run(
+        ["git", "-C", str(sync_root), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    b = (r.stdout or "").strip()
+    if not b or b == "HEAD":
+        return None
+    return b
+
+
+def _git_has_upstream(sync_root: Path) -> bool:
+    r = subprocess.run(
+        ["git", "-C", str(sync_root), "rev-parse", "--abbrev-ref", "@{u}"],
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0 and bool((r.stdout or "").strip())
+
+
 def _git_pull_rebase_if_remote(sync_root: Path) -> None:
     if not _git_has_remote(sync_root):
         return
+    remote = _git_preferred_remote(sync_root)
+    if not remote:
+        console.print("[red]No Git remote resolved for pull in the sync clone.[/red]")
+        raise typer.Exit(code=1)
+    branch = _git_branch_show_current(sync_root)
+    if not branch:
+        console.print(
+            "[red]Cannot git pull in detached HEAD in the sync clone. Check out a branch, then retry.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if _git_has_upstream(sync_root):
+        cmd: List[str] = ["git", "-C", str(sync_root), "pull", "--rebase"]
+    else:
+        cmd = ["git", "-C", str(sync_root), "pull", "--rebase", remote, branch]
     try:
         subprocess.run(
-            ["git", "-C", str(sync_root), "pull", "--rebase"],
+            cmd,
             check=True,
             capture_output=True,
             text=True,
@@ -1547,9 +1600,23 @@ def _git_push_if_remote(sync_root: Path) -> None:
     if not _git_has_remote(sync_root):
         console.print("[yellow]No Git remotes configured; payload committed locally only (skipping push).[/yellow]")
         return
+    remote = _git_preferred_remote(sync_root)
+    if not remote:
+        console.print("[red]No Git remote resolved for push in the sync clone.[/red]")
+        raise typer.Exit(code=1)
+    branch = _git_branch_show_current(sync_root)
+    if not branch:
+        console.print(
+            "[red]Cannot git push in detached HEAD in the sync clone. Check out a branch, then retry.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if _git_has_upstream(sync_root):
+        cmd: List[str] = ["git", "-C", str(sync_root), "push"]
+    else:
+        cmd = ["git", "-C", str(sync_root), "push", "-u", remote, branch]
     try:
         subprocess.run(
-            ["git", "-C", str(sync_root), "push"],
+            cmd,
             check=True,
             capture_output=True,
             text=True,
@@ -2157,7 +2224,7 @@ def config_edit_cmd() -> None:
             '# token = "your-auth-token"            # or set KODA_TURSO_TOKEN\n\n'
             "# [git]\n"
             '# sync_path = "/path/to/koda-sync-repo"    # clone root, or use KODA_GIT_SYNC_PATH\n'
-            '# payload_file = "koda-memos.jsonl"         # relative to sync_path (JSON Lines)\n'
+            '# payload_file = "koda-sync.jsonl"         # relative to sync_path (JSON Lines)\n'
             '# sync_format = "jsonl"                     # or KODA_GIT_SYNC_FORMAT\n\n'
             "# [exec]\n"
             '# shell = "sh"\n'
