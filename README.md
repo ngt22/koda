@@ -1,26 +1,33 @@
 # koda-cli
 
-A **terminal launcher, snippet store, and cross-machine clipboard**. Save commands, config templates, notes, and any text to SQLite; retrieve and execute them instantly — by index, shortcut, or fuzzy search. Sync via a private Git repository to share the same store across machines. Built with Python, Typer, and Rich.
+A **text store** for the terminal. Save any text — commands, paths, templates, notes — to SQLite and recall it instantly by index, shortcut, or fuzzy search. Saved entries can be executed as shell commands, making koda a **terminal launcher**. Sync via a private Git repository to share the same store across machines, giving you a **cross-machine clipboard** that works from any terminal. Built with Python, Typer, and Rich.
 
 ## Features
 
-- **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
-- **Command substitution**: Embed stored values directly in any command — `ssh $(koda r bastion)`, `tail -f $(koda r log-path)`.
-- **Fast save and recall**: `add`, `list`, `show`, `edit`, `pick`, `remove` — all with one-letter aliases.
+**Core**
+
+- **Save and recall**: `add`, `list`, `show`, `edit`, `pick`, `remove` — all with one-letter aliases. Save any text and retrieve it instantly by index, shortcut, or fuzzy search.
 - **Flexible input**: Arguments, heredocs, pipes, or `$EDITOR`.
 - **Shortcuts**: Assign a memorable string alias to any entry and use it in place of a numeric index.
-- **Variable substitution**: Expand `${KEY}` and `$1 $2 ...` placeholders at recall time with `-V`.
-- **Shell-friendly output**: `raw` prints body-only text for pipes, `eval`, and scripts.
 - **Tags**: Classify, filter, and batch-edit entries with multiple tags.
-- **Display index**: Stable `uid` (SHA1 short hash) plus user-controlled `idx`. Reorder with `move`/`swap`; close gaps with `compact`.
-- **Terminal clipboard**: Save any text with `koda a`, recall it instantly with `koda r` or `koda s` — paste into prompts, commands, or scripts without retyping.
+- **Shell-friendly output**: `raw` prints body-only text for pipes, `eval`, and scripts.
+
+**Convenient features**
+
+- **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
+- **Command substitution**: Embed stored values directly in any command — `curl http://$(koda r web-ip):8080/healthz`, `tail -f $(koda r log-path)`.
+- **Variable substitution**: Expand `${KEY}` and `$1 $2 ...` placeholders at recall time with `-V`.
+
+**Other**
+
 - **Cross-machine sync**: Push and pull via a private Git repository — the same store is available from every terminal, on every machine.
+- **Display index**: Stable `uid` (SHA1 short hash) plus user-controlled `idx`. Reorder with `move`/`swap`; close gaps with `compact`.
 - **XDG-friendly**: Data under `~/.local/share/koda/`, config under `~/.config/koda/`.
 - **Configurable defaults**: Persist preferences in `~/.config/koda/config.toml`.
 
 ## In action
 
-**① A verbose command becomes two tokens:**
+**Save a verbose command and run it by name:**
 
 ```bash
 # Save the verbose command once
@@ -29,64 +36,10 @@ koda a "git log --oneline --graph --decorate --all" -t git -s glog
 # From now on, just:
 koda x 1        # run by index
 koda x glog     # or by shortcut
+koda p -x       # or pick interactively with fzf and execute
 ```
 
-**② A deep path lives in one place, works everywhere:**
-
-```bash
-# Save it once
-koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
-
-# Embed in any command with $()
-tail -f $(koda r app-log)
-grep "ERROR" $(koda r app-log) | tail -20
-less +F $(koda r 2)   # same thing, by index
-```
-
----
-
-**③ One template, any target — variable substitution at call time:**
-
-```bash
-# Save a deploy command with a named placeholder
-koda a "aws s3 sync ./dist s3://\${bucket}/app/ --delete --profile prod" -t aws -s deploy
-
-# Swap the bucket at call time — no editing, no copy-paste
-koda x deploy -V bucket=my-staging-frontend
-koda x deploy -V bucket=my-prod-frontend
-```
-
-**④ Pipe any output in, reuse it immediately:**
-
-```bash
-# Capture a container's IP from docker inspect
-docker inspect app | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker
-
-# Reuse it in the next command — no switching windows, no copy-paste
-curl http://$(koda r):3000/healthz
-psql postgres://postgres@$(koda r):5432/mydb
-```
-
----
-
-**⑤ Build a command library once — run it on every machine:**
-
-> **Security note**: All entries are stored in plaintext SQLite.
-> If Git sync is enabled, `koda-sync.jsonl` will contain every entry in
-> plaintext and will be committed to the sync repository.
-> **Do not store passwords, API keys, or tokens.**
-
-```bash
-# Save a library of reusable snippets on machine A
-koda a "kubectl rollout restart deployment/\${svc} -n production" -t k8s -s k8s-restart
-koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1 'sudo journalctl -u app -n 100'" -t ops -s prod-log
-koda push   # commit and push to the Git sync repo
-
-# On any other machine — one pull, then go
-koda pull
-koda x k8s-restart -V svc=api-gateway
-koda x prod-log -V 10.0.1.42
-```
+→ [More examples](#example-uses)
 
 ## Quick reference
 
@@ -94,23 +47,23 @@ koda x prod-log -V 10.0.1.42
 
 | Command | Alias | Description |
 |---|---|---|
-| `add` | `a` | Save a new entry |
-| `raw` | `r` | Print entry body to stdout |
-| `list` | `l` | List and filter entries |
-| `exec` | `x` | Run a saved entry as a shell command |
-| `edit` | `e` | Open entry in `$EDITOR` |
-| `pick` | `p` | Interactive selector (requires fzf) |
-| `show` | `s` | Display entry with full metadata |
-| `remove` | `d` | Delete entries |
-| `copy` | `c` | Duplicate an entry |
-| `tag` | `t` | Batch-add or remove tags |
-| `move` | `m` | Move entry to a display index |
-| `swap` | `w` | Swap display positions of two entries |
-| `shift` | `h` | Shift entries up or down by N |
-| `compact` | `k` | Reassign indices to 0..n-1 |
-| `config` | `g` | Read/write configuration |
-| `push` | — | Export DB to Git sync repo and push |
-| `pull` | — | Pull Git sync repo and merge into local DB |
+| [`add`](#add) | `a` | Save a new entry |
+| [`raw`](#raw--body-only-output) | `r` | Print entry body to stdout |
+| [`list`](#list) | `l` | List and filter entries |
+| [`exec`](#execute-exec--run-a-saved-command) | `x` | Run a saved entry as a shell command |
+| [`edit`](#edit) | `e` | Open entry in `$EDITOR` |
+| [`pick`](#pick--interactive-launcher-fzf) | `p` | Interactive selector (requires fzf) |
+| [`show`](#show) | `s` | Display entry with full metadata |
+| [`remove`](#remove) | `d` | Delete entries |
+| [`copy`](#copy) | `c` | Duplicate an entry |
+| [`tag`](#tag) | `t` | Batch-add or remove tags |
+| [`move`](#reorder-entries-move-swap-shift-compact) | `m` | Move entry to a display index |
+| [`swap`](#reorder-entries-move-swap-shift-compact) | `w` | Swap display positions of two entries |
+| [`shift`](#reorder-entries-move-swap-shift-compact) | `h` | Shift entries up or down by N |
+| [`compact`](#reorder-entries-move-swap-shift-compact) | `k` | Reassign indices to 0..n-1 |
+| [`config`](#configuration-config) | `g` | Read/write configuration |
+| [`push`](#push-and-pull) | — | Export DB to Git sync repo and push |
+| [`pull`](#push-and-pull) | — | Pull Git sync repo and merge into local DB |
 
 Single-letter aliases are reserved and cannot be used as entry shortcuts.
 
@@ -152,13 +105,15 @@ pipx upgrade koda-cli
 
 ## Command reference
 
+Most commands take an **entry reference** as their first argument — either a **numeric index** (e.g. `5`, shown by `koda l`) or a **shortcut** (a string alias you assign with `-s` at save time, e.g. `koda a "..." -s glog`). In the examples below, names like `glog` and `web-srv` are shortcuts.
+
 ### Add
 
 Save a new entry from arguments, heredoc, stdin, or `$EDITOR`.
 
 ```bash
 koda a "docker compose up --build" -t docker -s dc
-koda a "YOUR_TEXT_HERE" -t work
+koda a "npm run dev" -t work
 koda a              # opens $EDITOR
 ```
 
@@ -179,14 +134,6 @@ history | grep ffmpeg | tail -1 | koda a -t ffmpeg
 kubectl get pods -o wide    | koda a -t k8s
 ```
 
-Full form and aliases:
-
-```bash
-koda add "YOUR_TEXT_HERE" -t tag --shortcut sc   # long form
-kd a "YOUR_TEXT_HERE" -t tag -s sc               # kd prefix (alias kd='koda')
-ka "YOUR_TEXT_HERE" -t tag -s sc                  # two-letter alias
-```
-
 ---
 
 ### Raw — body-only output
@@ -200,32 +147,21 @@ koda r                # latest entry
 echo 5 | koda r       # ref from stdin
 ```
 
-Full form and aliases:
-
-```bash
-koda raw web-srv   # long form
-kd r web-srv       # kd prefix
-kr web-srv         # two-letter alias
-```
-
 **Command substitution — embed a stored value inside any command:**
 
 ```bash
-# Without koda — retype long strings inline every time
-ssh -i ~/.ssh/key.pem ec2-user@bastion.prod.example.com
-tail -f /var/log/nginx/access.log
+# Capture the public IP of a freshly launched instance (changes every time)
+aws ec2 describe-instances --filters "Name=tag:Name,Values=web" \
+  | jq -r '.Reservations[0].Instances[0].PublicIpAddress' | koda a -t aws -s web-ip
 
-# Save once
-koda a "bastion.prod.example.com"  -t ssh -s bastion
-koda a "/var/log/nginx/access.log" -t log -s nginx-log
-
-# Embed with $()
-ssh -i ~/.ssh/key.pem ec2-user@$(koda r bastion)
-tail -f $(koda r nginx-log)
+# Embed in follow-up commands — no re-running the query, no copy-paste
+ssh -i ~/.ssh/prod.pem ec2-user@$(koda r web-ip)
+curl http://$(koda r web-ip):8080/healthz
+ansible web -i "$(koda r web-ip)," -m ping
 
 # Same with shell aliases: kr = koda raw, kd r = koda raw with kd prefix
-ssh -i ~/.ssh/key.pem ec2-user@$(kr bastion)
-tail -f $(kd r nginx-log)
+ssh -i ~/.ssh/prod.pem ec2-user@$(kr web-ip)
+curl http://$(kd r web-ip):8080/healthz
 ```
 
 **Workflow example — capture a transient value once, reuse in requests:**
@@ -272,14 +208,6 @@ koda l --columns idx,uid,sc,tags,content,created_at   # all columns
 koda l --columns idx,content    # minimal view
 ```
 
-Full form and aliases:
-
-```bash
-koda list -q docker -t dev   # long form
-kd l -q docker -t dev        # kd prefix
-kl -q docker -t dev          # two-letter alias
-```
-
 Default columns: `IDX`, `SC`, `Tags`, `Content`. Available columns: `idx`, `uid`, `sc`, `tags`, `content`, `created_at` (`idx` is required).
 Sort columns: `id`, `idx`, `uid`, `tags`, `content`, `created_at`, `modified_at`, `shortcut`.
 
@@ -291,40 +219,16 @@ Run a saved entry as a shell command, with optional variable substitution.
 
 ```bash
 # Without koda — retype or search history every time
-ssh -i ~/.ssh/key.pem ec2-user@192.168.1.100
+kubectl logs -f deployment/api-gateway --tail=200 -n production --timestamps=true
 
 # Save once
-koda a "ssh -i ~/.ssh/key.pem ec2-user@\$1" -t ssh -s web-srv
+koda a "kubectl logs -f deployment/\$1 --tail=200 -n production --timestamps=true" -t k8s -s klogs
 ```
 
 ```bash
-koda x web-srv              # run by shortcut
-koda x web-srv -V prod      # with variable substitution
-koda x 12                   # run by index
-```
-
-Full form and aliases:
-
-```bash
-koda exec web-srv -V localhost   # long form
-kd x web-srv -V localhost        # kd prefix
-kx web-srv -V localhost          # two-letter alias
-```
-
-**Workflow example — query a local LLM with a one-liner:**
-
-```bash
-# Save once via heredoc
-koda a -t llm -s ask <<'EOF'
-curl -sS http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "$1"}], "stream": false}' \
-  | jq -r '.choices[0].message.content'
-EOF
-
-# Ask anything — no copy-paste, no editing
-koda x ask -V "How high is Mt. Fuji?"
-koda x ask -V "Summarize the last git commit"
+koda x klogs -V api-gateway    # run by shortcut with substitution
+koda x klogs -V worker         # different deployment, same flags
+koda x 12                      # run by index
 ```
 
 **Deferred command substitution — `\$()` expands at exec time, not at save time:**
@@ -353,14 +257,6 @@ koda e web-srv        # by shortcut
 koda e 5              # by index
 ```
 
-Full form and aliases:
-
-```bash
-koda edit web-srv   # long form
-kd e web-srv        # kd prefix
-ke web-srv          # two-letter alias
-```
-
 ---
 
 ### Pick — interactive launcher (fzf)
@@ -370,14 +266,6 @@ Interactively select an entry with `fzf`, then run an action. Requires [`fzf`](h
 ```bash
 koda p -x                      # pick from all entries, execute immediately
 koda p -x -q docker -t dev     # pre-filter by query and tag, then pick
-```
-
-Full form and aliases:
-
-```bash
-koda pick --exec -q docker -t dev   # long form
-kd p -x -q docker -t dev            # kd prefix
-kp -x -q docker -t dev              # two-letter alias
 ```
 
 **Compound patterns — use pick as a selector:**
@@ -405,14 +293,6 @@ koda s 5              # by index
 echo 5 | koda s       # ref from stdin
 ```
 
-Full form and aliases:
-
-```bash
-koda show web-srv   # long form
-kd s web-srv        # kd prefix
-ks web-srv          # two-letter alias
-```
-
 ---
 
 ### Remove
@@ -428,14 +308,6 @@ koda d -q "tmp"             # delete entries matching body substring
 koda d --all -f             # delete everything (--all always requires -f)
 ```
 
-Full form and aliases:
-
-```bash
-koda remove web-srv   # long form
-kd d web-srv          # kd prefix
-kd web-srv            # two-letter alias (kd = koda remove)
-```
-
 ---
 
 ### Copy
@@ -447,14 +319,6 @@ koda c web-srv        # by shortcut
 koda c 5              # by index
 ```
 
-Full form and aliases:
-
-```bash
-koda copy web-srv   # long form
-kd c web-srv        # kd prefix
-kc web-srv          # two-letter alias
-```
-
 ---
 
 ### Tag
@@ -464,14 +328,6 @@ koda t 1 3 5 -t work          # add tag to individual entries
 koda t 2-6 -t archive         # add tag to a range
 koda t 1 3-5 7 -T old         # remove tag from mixed selection
 koda t 1 -t new -T old        # add one tag and remove another in one command
-```
-
-Full form and aliases:
-
-```bash
-koda tag 1 3-5 -t archive   # long form
-kd t 1 3-5 -t archive       # kd prefix
-kt 1 3-5 -t archive         # two-letter alias
 ```
 
 Re-tagging with an already-present tag is idempotent (no-op).
@@ -491,15 +347,6 @@ koda h 5 -n -1    # shift entries from index 5 downward by 1
 koda k            # reassign all indices to 0..n-1, fill gaps
 ```
 
-Full form and aliases:
-
-```bash
-koda swap 3 0    kd w 3 0    kw 3 0
-koda move 7 1    kd m 7 1    km 7 1
-koda shift 1     kd h 1      kh 1
-koda compact     kd k        kk
-```
-
 `move` requires the destination index to be unoccupied. Use `shift` to make room first, or `swap` to exchange two occupied positions.
 
 ---
@@ -514,14 +361,6 @@ koda g unset list.per_page       # remove key (reverts to built-in default)
 koda g reset -f                  # delete config file without prompt
 koda g edit                      # open config in $EDITOR
 koda g path                      # print config file path
-```
-
-Full form and aliases:
-
-```bash
-koda config set defaults.cmd list   # long form
-kd g set defaults.cmd list          # kd prefix
-kg set defaults.cmd list            # two-letter alias
 ```
 
 ---
@@ -628,7 +467,7 @@ alias kd='koda'
 Usage with kd prefix:
 
 ```bash
-kd a "YOUR_TEXT_HERE" -t tag -s sc    # add
+kd a "npm run dev" -t work            # add
 kd l -q docker                        # list
 kd s web-srv                # show
 kd e web-srv                # edit
@@ -667,14 +506,7 @@ alias kt='koda tag'
 alias kg='koda config'
 ```
 
-**Potential conflicts — check before adding:**
-
-| Alias | Possible conflict |
-|---|---|
-| `ks` | Kakoune session manager on some setups |
-| `kt` | Kotlin toolchain (`ktlint`, etc.) in some environments |
-
-Run `alias` in your shell to see what is already defined before adding these.
+Run `alias` in your shell to check for conflicts before adding these.
 
 ---
 
@@ -968,22 +800,28 @@ koda x ssm -V $(koda r new-instance)
 
 ### System ops
 
-**10. Tail a deeply nested log file**
+**10. Capture a container's dynamic port and reuse it immediately**
 
-Save a long log path once and embed it in any command with `$(koda r)`.
+A container started with `-P` gets a random host port. Capture it once and embed it across follow-up commands.
 
 ```bash
-koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
-tail -f $(koda r app-log)
+# Start a container and save the randomly assigned host port
+docker run -d -P --name web nginx
+docker port web 80/tcp | cut -d: -f2 | koda a -t docker -s web-port
+
+# Hit the container from any command — no repeated docker port query
+curl http://localhost:$(koda r web-port)/
+open http://localhost:$(koda r web-port)/admin
 ```
 
-**11. SSH to any server with one template**
+**11. SSH into ephemeral instances with a flag-heavy command**
 
-Save an SSH command with the host as a positional placeholder.
+Ephemeral instances (spot workers, CI runners) don't belong in `.ssh/config`. Save the full command with all flags and substitute the IP at call time.
 
 ```bash
-koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1" -t ssh -s ec2
+koda a "ssh -i ~/.ssh/prod.pem -o StrictHostKeyChecking=no ec2-user@\$1" -t ssh -s ec2
 koda x ec2 -V 10.0.1.42
+koda x ec2 -V 10.0.1.55
 ```
 
 **12. Sync a local directory to a remote server**
@@ -1004,29 +842,81 @@ koda a "tar czf ~/backups/src-\$(date +%Y%m%d-%H%M).tar.gz ./src" -t backup -s b
 koda x backup   # creates src-20260505-1430.tar.gz each time
 ```
 
+**14. Pick a saved host with fzf and substitute it into a command**
+
+Register IP addresses with a `host` tag. Use `koda p -r -t host` to pick one interactively and pass it as a variable into any command template. Or save the full command per host and use `koda p -x` to pick and run in one step.
+
+```bash
+# Register IP addresses once
+koda a "10.0.1.10" -t host -s web-1
+koda a "10.0.1.11" -t host -s web-2
+koda a "10.0.1.20" -t host -s db-1
+koda a "10.0.1.30" -t host -s bastion
+```
+
+**Pattern A — template + pick**: save a command once with `$1`, pick the IP at run time.
+
+```bash
+# Save a long command template once
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1 'sudo journalctl -u app -n 100 -f'" -t ssh -s taillog
+
+# Open fzf filtered to the host tag, pick a host, run the command
+koda x taillog -V $(koda p -r -t host)
+```
+
+`koda p -r -t host` opens fzf showing only `host` entries; selecting one prints the IP, which `-V` passes as `$1`.
+
+**Pattern B — one entry per host, pick and exec**: save the full command for each host, then use `koda p -x` to pick and execute in one step.
+
+```bash
+# Save the full command for each host
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.10 'sudo journalctl -u app -n 100 -f'" -t ssh -s web-1-log
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.11 'sudo journalctl -u app -n 100 -f'" -t ssh -s web-2-log
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.30 'sudo journalctl -u app -n 100 -f'" -t ssh -s bastion-log
+
+# Pick from the ssh entries and execute immediately
+koda p -x -t ssh
+```
+
+`koda p -x -t ssh` opens fzf pre-filtered to the `ssh` tag; pressing Enter executes the selected entry directly.
+
 ---
 
 ### Development
 
-**14. Open an internal dashboard in the browser**
+**15. Open a dashboard for any environment**
 
-Save an internal URL and open it without typing the full address.
-
-```bash
-koda a "https://internal.grafana.example.com/d/abc123/dashboard" -t url -s grafana
-xdg-open $(koda r grafana)
-```
-
-**15. Connect to a database instantly**
-
-Save a psql connection string for one-command access.
+Save dashboard URLs for each environment under the same tag, then pick one with fzf.
 
 ```bash
-koda a "psql postgres://admin@db.internal:5432/myapp" -t db -s db
-koda x db
+koda a "https://grafana.internal/d/prod/main"    -t url,prod    -s grafana-prod
+koda a "https://grafana.internal/d/staging/main" -t url,staging -s grafana-staging
+koda a "https://grafana.internal/d/dev/main"     -t url,dev     -s grafana-dev
+
+# Open directly by shortcut
+xdg-open $(koda r grafana-prod)
+
+# Or pick from all url entries interactively
+xdg-open $(koda p -r -t url)
 ```
 
-**16. Convert video with a saved ffmpeg preset**
+**16. Connect to a database in any environment**
+
+Save connection strings for each environment and pick one with fzf.
+
+```bash
+koda a "psql postgres://admin@db.prod.internal:5432/myapp"    -t db,prod    -s db-prod
+koda a "psql postgres://admin@db.staging.internal:5432/myapp" -t db,staging -s db-staging
+koda a "psql postgres://admin@db.dev.internal:5432/myapp"     -t db,dev     -s db-dev
+
+# Connect to a specific environment
+koda x db-prod
+
+# Or pick interactively
+koda p -x -t db
+```
+
+**17. Convert video with a saved ffmpeg preset**
 
 Save an ffmpeg encode command with source and output as positional placeholders.
 
@@ -1035,19 +925,19 @@ koda a "ffmpeg -i \$1 -vcodec libx264 -crf 23 \$2" -t media -s h264
 koda x h264 -V input.mov,output.mp4
 ```
 
-**17. Query a local LLM from the terminal**
+**18. Query a local LLM from the terminal**
 
 Save a curl-based request template via heredoc; supply the prompt at call time.
 
 ```bash
-koda a -t llm -s ask <<'EOF'
+koda a -t llm -s gen <<'EOF'
 curl -sS http://localhost:11434/api/generate \
   -d '{"model":"llama3","prompt":"$1","stream":false}' | jq -r .response
 EOF
-koda x ask -V "Explain HTTP/2 server push"
+koda x gen -V "Explain HTTP/2 server push"
 ```
 
-**18. Append a saved snippet to a project file**
+**19. Append a saved snippet to a project file**
 
 Store a reusable multi-line fragment and stream it directly into a file with `koda r`.
 
@@ -1064,7 +954,7 @@ koda r pybase >> Dockerfile
 
 ### Cross-machine
 
-**19. Share your public SSH key across machines**
+**20. Share your public SSH key across machines**
 
 Save the key on machine A, push it, then pull and retrieve it on any other machine.
 
@@ -1078,7 +968,7 @@ koda pull
 koda r pubkey   # paste into authorized_keys or GitHub
 ```
 
-**20. Keep reusable commands in sync across machines**
+**21. Keep reusable commands in sync across machines**
 
 Build a library of snippets on one machine and make them available everywhere via Git sync.
 
@@ -1091,6 +981,26 @@ koda push
 # Machine B — pull and run immediately
 koda pull
 koda x k8s-restart -V svc=worker
+```
+
+---
+
+### Local LLM
+
+**22. Query a llama.cpp server from the terminal**
+
+llama.cpp exposes an OpenAI-compatible API at `http://localhost:8080`. Save the curl invocation once and supply the prompt at call time.
+
+```bash
+koda a -t llm -s llm <<'EOF'
+curl -sS http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\": \"llama3\", \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}], \"stream\": false}" \
+  | jq -r '.choices[0].message.content'
+EOF
+
+koda x llm -V "What is the time complexity of quicksort?"
+koda x llm -V "Summarize the last git commit"
 ```
 
 ---
