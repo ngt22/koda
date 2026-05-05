@@ -38,16 +38,16 @@ koda x 1        # run by index
 koda x glog     # or by shortcut
 ```
 
-**② A deep path lives in one place, works everywhere:**
+**② One captured path, many commands — no repeated lookup:**
 
 ```bash
-# Save it once
-koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
+# Capture the log path from a running container (changes on every docker run)
+docker inspect app | jq -r '.[0].LogPath' | koda a -t docker -s app-log
 
-# Embed in any command with $()
+# Reuse in any command — no repeated docker inspect, no copy-paste
 tail -f $(koda r app-log)
 grep "ERROR" $(koda r app-log) | tail -20
-less +F $(koda r 2)   # same thing, by index
+wc -l $(koda r 2)     # same path, by index
 ```
 
 **③ One template, any target — variable substitution at call time:**
@@ -155,6 +155,8 @@ pipx upgrade koda-cli
 
 ## Command reference
 
+Most commands take an **entry reference** as their first argument — either a **numeric index** (e.g. `5`, shown by `koda l`) or a **shortcut** (a string alias you assign with `-s` at save time, e.g. `koda a "..." -s glog`). In the examples below, names like `glog` and `web-srv` are shortcuts.
+
 ### Add
 
 Save a new entry from arguments, heredoc, stdin, or `$EDITOR`.
@@ -198,21 +200,18 @@ echo 5 | koda r       # ref from stdin
 **Command substitution — embed a stored value inside any command:**
 
 ```bash
-# Without koda — retype long strings inline every time
-ssh -i ~/.ssh/key.pem ec2-user@bastion.prod.example.com
-tail -f /var/log/nginx/access.log
+# Capture the public IP of a freshly launched instance (changes every time)
+aws ec2 describe-instances --filters "Name=tag:Name,Values=web" \
+  | jq -r '.Reservations[0].Instances[0].PublicIpAddress' | koda a -t aws -s web-ip
 
-# Save once
-koda a "bastion.prod.example.com"  -t ssh -s bastion
-koda a "/var/log/nginx/access.log" -t log -s nginx-log
-
-# Embed with $()
-ssh -i ~/.ssh/key.pem ec2-user@$(koda r bastion)
-tail -f $(koda r nginx-log)
+# Embed in follow-up commands — no re-running the query, no copy-paste
+ssh -i ~/.ssh/prod.pem ec2-user@$(koda r web-ip)
+curl http://$(koda r web-ip):8080/healthz
+ansible web -i "$(koda r web-ip)," -m ping
 
 # Same with shell aliases: kr = koda raw, kd r = koda raw with kd prefix
-ssh -i ~/.ssh/key.pem ec2-user@$(kr bastion)
-tail -f $(kd r nginx-log)
+ssh -i ~/.ssh/prod.pem ec2-user@$(kr web-ip)
+curl http://$(kd r web-ip):8080/healthz
 ```
 
 **Workflow example — capture a transient value once, reuse in requests:**
@@ -270,16 +269,16 @@ Run a saved entry as a shell command, with optional variable substitution.
 
 ```bash
 # Without koda — retype or search history every time
-ssh -i ~/.ssh/key.pem ec2-user@192.168.1.100
+kubectl logs -f deployment/api-gateway --tail=200 -n production --timestamps=true
 
 # Save once
-koda a "ssh -i ~/.ssh/key.pem ec2-user@\$1" -t ssh -s web-srv
+koda a "kubectl logs -f deployment/\$1 --tail=200 -n production --timestamps=true" -t k8s -s klogs
 ```
 
 ```bash
-koda x web-srv              # run by shortcut
-koda x web-srv -V prod      # with variable substitution
-koda x 12                   # run by index
+koda x klogs -V api-gateway    # run by shortcut with substitution
+koda x klogs -V worker         # different deployment, same flags
+koda x 12                      # run by index
 ```
 
 **Workflow example — query a local LLM with a one-liner:**
@@ -573,14 +572,7 @@ alias kt='koda tag'
 alias kg='koda config'
 ```
 
-**Potential conflicts — check before adding:**
-
-| Alias | Possible conflict |
-|---|---|
-| `ks` | Kakoune session manager on some setups |
-| `kt` | Kotlin toolchain (`ktlint`, etc.) in some environments |
-
-Run `alias` in your shell to see what is already defined before adding these.
+Run `alias` in your shell to check for conflicts before adding these.
 
 ---
 
@@ -874,22 +866,28 @@ koda x ssm -V $(koda r new-instance)
 
 ### System ops
 
-**10. Tail a deeply nested log file**
+**10. Capture a container's dynamic port and reuse it immediately**
 
-Save a long log path once and embed it in any command with `$(koda r)`.
+A container started with `-P` gets a random host port. Capture it once and embed it across follow-up commands.
 
 ```bash
-koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
-tail -f $(koda r app-log)
+# Start a container and save the randomly assigned host port
+docker run -d -P --name web nginx
+docker port web 80/tcp | cut -d: -f2 | koda a -t docker -s web-port
+
+# Hit the container from any command — no repeated docker port query
+curl http://localhost:$(koda r web-port)/
+open http://localhost:$(koda r web-port)/admin
 ```
 
-**11. SSH to any server with one template**
+**11. SSH into ephemeral instances with a flag-heavy command**
 
-Save an SSH command with the host as a positional placeholder.
+Ephemeral instances (spot workers, CI runners) don't belong in `.ssh/config`. Save the full command with all flags and substitute the IP at call time.
 
 ```bash
-koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1" -t ssh -s ec2
+koda a "ssh -i ~/.ssh/prod.pem -o StrictHostKeyChecking=no ec2-user@\$1" -t ssh -s ec2
 koda x ec2 -V 10.0.1.42
+koda x ec2 -V 10.0.1.55
 ```
 
 **12. Sync a local directory to a remote server**
@@ -952,22 +950,36 @@ koda p -x -t ssh
 
 ### Development
 
-**15. Open an internal dashboard in the browser**
+**15. Open a dashboard for any environment**
 
-Save an internal URL and open it without typing the full address.
+Save dashboard URLs for each environment under the same tag, then pick one with fzf.
 
 ```bash
-koda a "https://internal.grafana.example.com/d/abc123/dashboard" -t url -s grafana
-xdg-open $(koda r grafana)
+koda a "https://grafana.internal/d/prod/main"    -t url,prod    -s grafana-prod
+koda a "https://grafana.internal/d/staging/main" -t url,staging -s grafana-staging
+koda a "https://grafana.internal/d/dev/main"     -t url,dev     -s grafana-dev
+
+# Open directly by shortcut
+xdg-open $(koda r grafana-prod)
+
+# Or pick from all url entries interactively
+xdg-open $(koda p -r -t url)
 ```
 
-**16. Connect to a database instantly**
+**16. Connect to a database in any environment**
 
-Save a psql connection string for one-command access.
+Save connection strings for each environment and pick one with fzf.
 
 ```bash
-koda a "psql postgres://admin@db.internal:5432/myapp" -t db -s db
-koda x db
+koda a "psql postgres://admin@db.prod.internal:5432/myapp"    -t db,prod    -s db-prod
+koda a "psql postgres://admin@db.staging.internal:5432/myapp" -t db,staging -s db-staging
+koda a "psql postgres://admin@db.dev.internal:5432/myapp"     -t db,dev     -s db-dev
+
+# Connect to a specific environment
+koda x db-prod
+
+# Or pick interactively
+koda p -x -t db
 ```
 
 **17. Convert video with a saved ffmpeg preset**
