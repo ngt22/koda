@@ -5,7 +5,7 @@ A **terminal launcher, snippet store, and cross-machine clipboard**. Save comman
 ## Features
 
 - **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
-- **Command substitution**: Embed stored values directly in any command — `ssh $(kr bastion)`, `tail -f $(kr log-path)`.
+- **Command substitution**: Embed stored values directly in any command — `ssh $(koda r bastion)`, `tail -f $(koda r log-path)`.
 - **Fast save and recall**: `add`, `list`, `show`, `edit`, `pick`, `remove` — all with one-letter aliases.
 - **Flexible input**: Arguments, heredocs, pipes, or `$EDITOR`.
 - **Shortcuts**: Assign a memorable string alias to any entry and use it in place of a numeric index.
@@ -323,7 +323,7 @@ EOF
 
 # Ask anything — no copy-paste, no editing
 koda x ask -V "How high is Mt. Fuji?"
-kx ask -V "Summarize the last git commit"   # two-letter alias
+koda x ask -V "Summarize the last git commit"
 ```
 
 > **Security**: only store trusted commands. `exec` runs the body through the configured shell (`sh` by default).
@@ -373,7 +373,7 @@ koda x "$(koda p -p)"          # pick IDX, pass to exec
 kd x "$(kd p -p)"              # kd prefix
 kx "$(kp -p)"                  # two-letter alias
 
-eval $(kp -p | xargs kr)       # pick IDX, eval the body
+eval $(koda p -p | xargs koda r)   # pick IDX, eval the body
 ```
 
 Other action flags: `-e` edit, `-r` raw, `-s` show.
@@ -576,13 +576,11 @@ koda a "gcloud storage cp \$1 gs://my-company-analytics-prod/uploads/" -t gcloud
 # Run with different values — no need to retype the bucket path
 koda x upload -V ./report.csv
 koda x upload -V ./summary.csv
-kx upload -V ./report.csv          # two-letter alias
 
 # Named substitution — swap one variable by name
 koda a "aws s3 sync ./dist s3://acme-frontend-\${env}-us-east-1/app/" -t aws -s deploy
 koda x deploy -V env=prod
 koda x deploy -V env=staging
-kx deploy -V env=prod              # two-letter alias
 
 # Multiple positional values
 koda a "rsync -avz \$1 \$2" -t rsync
