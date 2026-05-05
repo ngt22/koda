@@ -32,40 +32,45 @@ koda x web-srv -V staging.example.com
 **② Query a local LLM with a one-liner:**
 
 ```bash
-# ka = koda add, kx = koda exec  (two-letter aliases)
-ka -t llm -s ask <<'EOF'
+koda a -t llm -s ask <<'EOF'
 curl -sS http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "$1"}], "stream": false}' \
   | jq -r '.choices[0].message.content'
 EOF
 
-# kx = koda exec — fill in $1 at call time
-kx ask -V "How high is Mt. Fuji?"
-kx ask -V "Summarize the last git commit"
+# fill in $1 at call time
+koda x ask -V "How high is Mt. Fuji?"
+koda x ask -V "Summarize the last git commit"
+# ka / kx are optional two-letter shell aliases for the same commands
 ```
 
 **③ Use as a terminal clipboard — paste anything, anywhere:**
 
+> **Security note**: All entries are stored in plaintext SQLite.
+> If Git sync is enabled, `koda-sync.jsonl` will contain every entry in
+> plaintext and will be committed to the sync repository.
+> **Do not store passwords, API keys, or tokens.**
+
 ```bash
-# Save any text: URLs, tokens, paths, one-liners
-ka "https://internal.example.com/dashboard?token=abc123" -t url -s dash
-curl -s https://auth.example.com/token | jq -r .access_token | ka -t token -s tok
+# Save any text: URLs, paths, one-liners
+koda a "https://internal.example.com/dashboard" -t url -s dash
+docker inspect web | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker -s web-ip
 
 # Recall and paste into any prompt or command
-kr dash               # prints raw text — ready to paste   (kr = koda raw)
-ks tok                # display with metadata              (ks = koda show)
-curl -H "Authorization: Bearer $(kr tok)" https://api.example.com/v1/data
+koda r dash          # prints raw text — ready to paste  (kr is a two-letter alias)
+koda s dash          # display with metadata             (ks is a two-letter alias)
+curl http://$(koda r web-ip):3000/healthz
 ```
 
 With Turso configured, the same store is available on every machine:
 
 ```bash
 # Machine A — save your public key once
-ka "$(cat ~/.ssh/id_ed25519.pub)" -t ssh -s pubkey
+koda a "$(cat ~/.ssh/id_ed25519.pub)" -t ssh -s pubkey
 
 # Machine B — retrieve it instantly, no file transfer needed
-kr pubkey
+koda r pubkey
 ```
 
 ---
@@ -73,13 +78,13 @@ kr pubkey
 **④ Pipe docker output in, retrieve immediately:**
 
 ```bash
-# kd a = koda add, kd r = koda raw  (kd prefix: alias kd='koda')
+# Use koda directly, or add alias kd='koda' for shorter typing
 docker inspect web \
   | jq -r '.[0].NetworkSettings.IPAddress' \
-  | kd a -t docker
+  | koda a -t docker
 
-# no ref needed — kd r retrieves the most recent entry
-curl http://$(kd r):3000/healthz
+# no ref needed — retrieves the most recent entry
+curl http://$(koda r):3000/healthz
 ```
 
 ## Quick reference
@@ -150,7 +155,7 @@ Save a new entry from arguments, heredoc, stdin, or `$EDITOR`.
 
 ```bash
 koda a "docker compose up --build" -t docker -s dc
-koda a "quick note" -t work
+koda a "YOUR_TEXT_HERE" -t work
 koda a              # opens $EDITOR
 ```
 
@@ -169,15 +174,14 @@ Pipe any command output directly into `koda a`:
 ```bash
 history | grep ffmpeg | tail -1 | koda a -t ffmpeg
 kubectl get pods -o wide    | koda a -t k8s
-openssl rand -hex 32        | koda a -t secret
 ```
 
 Full form and aliases:
 
 ```bash
-koda add "memo" -t tag --shortcut sc   # long form
-kd a "memo" -t tag -s sc              # kd prefix
-ka "memo" -t tag -s sc                # two-letter alias
+koda add "YOUR_TEXT_HERE" -t tag --shortcut sc   # long form
+kd a "YOUR_TEXT_HERE" -t tag -s sc               # kd prefix (alias kd='koda')
+ka "YOUR_TEXT_HERE" -t tag -s sc                  # two-letter alias
 ```
 
 ---
@@ -212,34 +216,33 @@ tail -f /var/log/nginx/access.log
 koda a "bastion.prod.example.com"  -t ssh -s bastion
 koda a "/var/log/nginx/access.log" -t log -s nginx-log
 
-# Embed with $() — using two-letter alias
-ssh -i ~/.ssh/key.pem ec2-user@$(kr bastion)
-tail -f $(kr nginx-log)
+# Embed with $()
+ssh -i ~/.ssh/key.pem ec2-user@$(koda r bastion)
+tail -f $(koda r nginx-log)
 
-# kd prefix
-ssh -i ~/.ssh/key.pem ec2-user@$(kd r bastion)
+# Same with shell aliases: kr = koda raw, kd r = koda raw with kd prefix
+ssh -i ~/.ssh/key.pem ec2-user@$(kr bastion)
 tail -f $(kd r nginx-log)
 ```
 
-**Workflow example — save a token via pipe, reuse in requests:**
+**Workflow example — capture a transient value once, reuse in requests:**
+
+> **Security note**: Do not store passwords, API keys, or tokens.
+> All entries are saved in plaintext SQLite, and Git sync will expose them
+> in plaintext in the sync repository. Use this pattern for non-sensitive
+> transient values only (container IPs, port numbers, generated paths, etc.).
 
 ```bash
-# Step 1: obtain a token and save it
-curl -s -X POST https://auth.example.com/token \
-  -d '{"client_id":"myapp","client_secret":"s3cr3t"}' \
-  | jq -r '.access_token' \
-  | koda a -t api,token -s api-token
+# Step 1: capture an ephemeral value
+docker inspect web \
+  | jq -r '.[0].NetworkSettings.IPAddress' \
+  | koda a -t docker -s web-ip
 
-# Step 2: embed in every subsequent request — no copy-paste
-curl -H "Authorization: Bearer $(kr api-token)" \
-  https://api.example.com/v1/users
+# Step 2: reuse it in subsequent commands — no copy-paste
+curl http://$(koda r web-ip):3000/healthz
 
-# kd prefix
-curl -H "Authorization: Bearer $(kd r api-token)" \
-  https://api.example.com/v1/users
-
-# Refresh when expired
-koda e api-token   # opens $EDITOR to paste the new value
+# Update when the value changes
+koda e web-ip   # opens $EDITOR
 ```
 
 `raw` strips shell-style inline comments (`#` at line start or after whitespace). Use `show` to see the original stored text.
@@ -611,8 +614,8 @@ alias kd='koda'
 Usage with kd prefix:
 
 ```bash
-kd a "memo" -t tag -s sc    # add
-kd l -q docker              # list
+kd a "YOUR_TEXT_HERE" -t tag -s sc    # add
+kd l -q docker                        # list
 kd s web-srv                # show
 kd e web-srv                # edit
 kd r web-srv                # raw
@@ -682,8 +685,9 @@ path = "~/.local/share/koda/koda.db"
 backend = "local"   # "local" or "turso"
 
 [turso]
-url = "libsql://your-db.turso.io"   # Turso database URL
-token = "your-auth-token"           # Auth token (prefer KODA_TURSO_TOKEN env var)
+url = "libsql://YOUR_DB.turso.io"    # Turso database URL
+# token = "..."                       # ⚠ Omit here — use KODA_TURSO_TOKEN env var
+#                                     #   (config file may be committed to version control)
 
 [git]
 sync_path = "~/koda-sync"           # local clone of the sync repository
@@ -732,20 +736,21 @@ turso db show koda --url
 turso db tokens create koda
 ```
 
-3. Configure Koda (use env vars to keep the token out of the config file):
+3. Configure Koda — use environment variables to keep the token out of the config file:
 
 ```bash
-export KODA_TURSO_URL="libsql://your-db.turso.io"
-export KODA_TURSO_TOKEN="your-auth-token"
+export KODA_TURSO_URL="libsql://YOUR_DB.turso.io"
+export KODA_TURSO_TOKEN="YOUR_AUTH_TOKEN"
 koda config set db.backend turso
 ```
 
-Or write both to the config file:
+You can also write the URL to the config file, but **omit the token** and supply it via the env var:
 
 ```bash
 koda config set db.backend turso
-koda config set turso.url "libsql://your-db.turso.io"
-koda config set turso.token "your-auth-token"
+koda config set turso.url "libsql://YOUR_DB.turso.io"
+# Do NOT run: koda config set turso.token "..."
+# The config file may be committed to version control — use KODA_TURSO_TOKEN instead.
 ```
 
 ### Switching between backends
@@ -762,6 +767,11 @@ The local SQLite database (`db.path`) and the Turso database are independent —
 Koda supports syncing entries across machines using a Git repository (e.g. a private GitHub repo) as a transport. On push, Koda exports the local database as a JSON Lines file (`koda-sync.jsonl`) into a local clone, commits it, and pushes to the remote. On pull, it fetches the latest commit and merges entries into the local database by `uid` and `modified_at` — newer wins, no entry is deleted.
 
 This works independently of the Turso backend. You can use Git sync with the default local SQLite database.
+
+> **Security note**: `koda-sync.jsonl` contains **all entries in plaintext**.
+> Any passwords, tokens, or secrets stored in Koda will be committed to the
+> sync repository in plaintext. Use a **private** repository and avoid storing
+> sensitive values in Koda when Git sync is enabled.
 
 ### Setup
 
