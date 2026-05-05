@@ -1,6 +1,6 @@
-# Koda
+# koda-cli
 
-A **terminal launcher, snippet store, and cross-machine clipboard**. Save commands, config templates, notes, and any text to SQLite; retrieve and execute them instantly — by index, shortcut, or fuzzy search. Sync to [Turso](https://turso.tech) to access the same store from any machine. Built with Python, Typer, and Rich.
+A **terminal launcher, snippet store, and cross-machine clipboard**. Save commands, config templates, notes, and any text to SQLite; retrieve and execute them instantly — by index, shortcut, or fuzzy search. Sync via a private Git repository to share the same store across machines. Built with Python, Typer, and Rich.
 
 ## Features
 
@@ -13,39 +13,64 @@ A **terminal launcher, snippet store, and cross-machine clipboard**. Save comman
 - **Shell-friendly output**: `raw` prints body-only text for pipes, `eval`, and scripts.
 - **Tags**: Classify, filter, and batch-edit entries with multiple tags.
 - **Display index**: Stable `uid` (SHA1 short hash) plus user-controlled `idx`. Reorder with `move`/`swap`; close gaps with `compact`.
-- **Terminal clipboard**: Save any text with `ka`, recall it instantly with `kr` or `ks` — paste into prompts, commands, or scripts without retyping.
-- **Cross-machine sync**: Switch to a [Turso](https://turso.tech) remote backend and the same store is available from every terminal, on every machine.
+- **Terminal clipboard**: Save any text with `koda a`, recall it instantly with `koda r` or `koda s` — paste into prompts, commands, or scripts without retyping.
+- **Cross-machine sync**: Push and pull via a private Git repository — the same store is available from every terminal, on every machine.
 - **XDG-friendly**: Data under `~/.local/share/koda/`, config under `~/.config/koda/`.
 - **Configurable defaults**: Persist preferences in `~/.config/koda/config.toml`.
 
 ## In action
 
-**① Save a command once, run it with different inputs:**
+**① A 60-character command becomes two tokens:**
 
 ```bash
-koda a "ssh -i ~/.ssh/key.pem ec2-user@$1" -t ssh -s web-srv
+# Save the verbose command once
+koda a "docker run --rm -it -v \$(pwd):/app -w /app -p 8080:8080 node:20-alpine sh" \
+  -t docker -s devbox
 
-koda x web-srv -V prod.example.com
-koda x web-srv -V staging.example.com
+# From now on, just:
+koda x 1        # run by index
+koda x devbox   # or by shortcut
 ```
 
-**② Query a local LLM with a one-liner:**
+**② A deep path lives in one place, works everywhere:**
 
 ```bash
-koda a -t llm -s ask <<'EOF'
-curl -sS http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "$1"}], "stream": false}' \
-  | jq -r '.choices[0].message.content'
-EOF
+# Save it once
+koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
 
-# fill in $1 at call time
-koda x ask -V "How high is Mt. Fuji?"
-koda x ask -V "Summarize the last git commit"
-# ka / kx are optional two-letter shell aliases for the same commands
+# Embed in any command with $()
+tail -f $(koda r app-log)
+grep "ERROR" $(koda r app-log) | tail -20
+less +F $(koda r 2)   # same thing, by index
 ```
 
-**③ Use as a terminal clipboard — paste anything, anywhere:**
+---
+
+**③ One template, any target — variable substitution at call time:**
+
+```bash
+# Save a deploy command with a named placeholder
+koda a "aws s3 sync ./dist s3://\${bucket}/app/ --delete --profile prod" -t aws -s deploy
+
+# Swap the bucket at call time — no editing, no copy-paste
+koda x deploy -V bucket=my-staging-frontend
+koda x deploy -V bucket=my-prod-frontend
+```
+
+**④ Pipe any output in, reuse it immediately:**
+
+```bash
+# Capture a container's IP from docker inspect
+docker inspect app | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker
+
+# Reuse it in the next command — no switching windows, no copy-paste
+curl http://$(koda r):3000/healthz
+psql postgres://postgres@$(koda r):5432/mydb
+```
+
+---
+
+**⑤ Build a command library once — run it on every machine:**
 
 > **Security note**: All entries are stored in plaintext SQLite.
 > If Git sync is enabled, `koda-sync.jsonl` will contain every entry in
@@ -53,38 +78,15 @@ koda x ask -V "Summarize the last git commit"
 > **Do not store passwords, API keys, or tokens.**
 
 ```bash
-# Save any text: URLs, paths, one-liners
-koda a "https://internal.example.com/dashboard" -t url -s dash
-docker inspect web | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker -s web-ip
+# Save a library of reusable snippets on machine A
+koda a "kubectl rollout restart deployment/\${svc} -n production" -t k8s -s k8s-restart
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1 'sudo journalctl -u app -n 100'" -t ops -s prod-log
+koda push   # commit and push to the Git sync repo
 
-# Recall and paste into any prompt or command
-koda r dash          # prints raw text — ready to paste  (kr is a two-letter alias)
-koda s dash          # display with metadata             (ks is a two-letter alias)
-curl http://$(koda r web-ip):3000/healthz
-```
-
-With Turso configured, the same store is available on every machine:
-
-```bash
-# Machine A — save your public key once
-koda a "$(cat ~/.ssh/id_ed25519.pub)" -t ssh -s pubkey
-
-# Machine B — retrieve it instantly, no file transfer needed
-koda r pubkey
-```
-
----
-
-**④ Pipe docker output in, retrieve immediately:**
-
-```bash
-# Use koda directly, or add alias kd='koda' for shorter typing
-docker inspect web \
-  | jq -r '.[0].NetworkSettings.IPAddress' \
-  | koda a -t docker
-
-# no ref needed — retrieves the most recent entry
-curl http://$(koda r):3000/healthz
+# On any other machine — one pull, then go
+koda pull
+koda x k8s-restart -V svc=api-gateway
+koda x prod-log -V 10.0.1.42
 ```
 
 ## Quick reference
