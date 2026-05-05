@@ -15,7 +15,7 @@ A **text store** for the terminal. Save any text — commands, paths, templates,
 **Convenient features**
 
 - **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
-- **Command substitution**: Embed stored values directly in any command — `ssh $(koda r bastion)`, `tail -f $(koda r log-path)`.
+- **Command substitution**: Embed stored values directly in any command — `curl http://$(koda r web-ip):8080/healthz`, `tail -f $(koda r log-path)`.
 - **Variable substitution**: Expand `${KEY}` and `$1 $2 ...` placeholders at recall time with `-V`.
 
 **Other**
@@ -27,7 +27,7 @@ A **text store** for the terminal. Save any text — commands, paths, templates,
 
 ## In action
 
-**① A verbose command becomes two tokens:**
+**Save a verbose command and run it by name:**
 
 ```bash
 # Save the verbose command once
@@ -229,22 +229,6 @@ koda a "kubectl logs -f deployment/\$1 --tail=200 -n production --timestamps=tru
 koda x klogs -V api-gateway    # run by shortcut with substitution
 koda x klogs -V worker         # different deployment, same flags
 koda x 12                      # run by index
-```
-
-**Workflow example — query a local LLM with a one-liner:**
-
-```bash
-# Save once via heredoc
-koda a -t llm -s ask <<'EOF'
-curl -sS http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "$1"}], "stream": false}' \
-  | jq -r '.choices[0].message.content'
-EOF
-
-# Ask anything — no copy-paste, no editing
-koda x ask -V "How high is Mt. Fuji?"
-koda x ask -V "Summarize the last git commit"
 ```
 
 **Deferred command substitution — `\$()` expands at exec time, not at save time:**
@@ -946,11 +930,11 @@ koda x h264 -V input.mov,output.mp4
 Save a curl-based request template via heredoc; supply the prompt at call time.
 
 ```bash
-koda a -t llm -s ask <<'EOF'
+koda a -t llm -s gen <<'EOF'
 curl -sS http://localhost:11434/api/generate \
   -d '{"model":"llama3","prompt":"$1","stream":false}' | jq -r .response
 EOF
-koda x ask -V "Explain HTTP/2 server push"
+koda x gen -V "Explain HTTP/2 server push"
 ```
 
 **19. Append a saved snippet to a project file**
@@ -1008,15 +992,15 @@ koda x k8s-restart -V svc=worker
 llama.cpp exposes an OpenAI-compatible API at `http://localhost:8080`. Save the curl invocation once and supply the prompt at call time.
 
 ```bash
-koda a -t llm -s ask <<'EOF'
+koda a -t llm -s llm <<'EOF'
 curl -sS http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{\"model\": \"llama3\", \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}], \"stream\": false}" \
   | jq -r '.choices[0].message.content'
 EOF
 
-koda x ask -V "What is the time complexity of quicksort?"
-koda x ask -V "Summarize the last git commit"
+koda x llm -V "What is the time complexity of quicksort?"
+koda x llm -V "Summarize the last git commit"
 ```
 
 ---
