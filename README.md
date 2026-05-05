@@ -109,6 +109,8 @@ koda x prod-log -V 10.0.1.42
 | `shift` | `h` | Shift entries up or down by N |
 | `compact` | `k` | Reassign indices to 0..n-1 |
 | `config` | `g` | Read/write configuration |
+| `push` | — | Export DB to Git sync repo and push |
+| `pull` | — | Pull Git sync repo and merge into local DB |
 
 Single-letter aliases are reserved and cannot be used as entry shortcuts.
 
