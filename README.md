@@ -36,60 +36,10 @@ koda a "git log --oneline --graph --decorate --all" -t git -s glog
 # From now on, just:
 koda x 1        # run by index
 koda x glog     # or by shortcut
+koda p -x       # or pick interactively with fzf and execute
 ```
 
-**② One captured path, many commands — no repeated lookup:**
-
-```bash
-# Capture the log path from a running container (changes on every docker run)
-docker inspect app | jq -r '.[0].LogPath' | koda a -t docker -s app-log
-
-# Reuse in any command — no repeated docker inspect, no copy-paste
-tail -f $(koda r app-log)
-grep "ERROR" $(koda r app-log) | tail -20
-wc -l $(koda r 2)     # same path, by index
-```
-
-**③ One template, any target — variable substitution at call time:**
-
-```bash
-# Save a deploy command with a named placeholder
-koda a "aws s3 sync ./dist s3://\${bucket}/app/ --delete --profile prod" -t aws -s deploy
-
-# Swap the bucket at call time — no editing, no copy-paste
-koda x deploy -V bucket=my-staging-frontend
-koda x deploy -V bucket=my-prod-frontend
-```
-
-**④ Pipe any output in, reuse it immediately:**
-
-```bash
-# Capture a container's IP from docker inspect
-docker inspect app | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker
-
-# Reuse it in the next command — no switching windows, no copy-paste
-curl http://$(koda r):3000/healthz
-psql postgres://postgres@$(koda r):5432/mydb
-```
-
-**⑤ Build a command library once — run it on every machine:**
-
-> **Security note**: All entries are stored in plaintext SQLite.
-> If Git sync is enabled, `koda-sync.jsonl` will contain every entry in
-> plaintext and will be committed to the sync repository.
-> **Do not store passwords, API keys, or tokens.**
-
-```bash
-# Save a library of reusable snippets on machine A
-koda a "kubectl rollout restart deployment/\${svc} -n production" -t k8s -s k8s-restart
-koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1 'sudo journalctl -u app -n 100'" -t ops -s prod-log
-koda push   # commit and push to the Git sync repo
-
-# On any other machine — one pull, then go
-koda pull
-koda x k8s-restart -V svc=api-gateway
-koda x prod-log -V 10.0.1.42
-```
+→ [More examples](#example-uses)
 
 ## Quick reference
 
@@ -1047,6 +997,26 @@ koda push
 # Machine B — pull and run immediately
 koda pull
 koda x k8s-restart -V svc=worker
+```
+
+---
+
+### Local LLM
+
+**22. Query a llama.cpp server from the terminal**
+
+llama.cpp exposes an OpenAI-compatible API at `http://localhost:8080`. Save the curl invocation once and supply the prompt at call time.
+
+```bash
+koda a -t llm -s ask <<'EOF'
+curl -sS http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\": \"llama3\", \"messages\": [{\"role\": \"user\", \"content\": \"$1\"}], \"stream\": false}" \
+  | jq -r '.choices[0].message.content'
+EOF
+
+koda x ask -V "What is the time complexity of quicksort?"
+koda x ask -V "Summarize the last git commit"
 ```
 
 ---
