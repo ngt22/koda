@@ -865,6 +865,234 @@ Environment variable overrides:
 | `KODA_GIT_PAYLOAD_FILE` | Override `git.payload_file` |
 | `KODA_GIT_SYNC_FORMAT` | Override `git.sync_format` |
 
+## Example uses
+
+A collection of concrete examples across different domains.
+
+---
+
+### Git
+
+**1. Shorten a verbose git log command**
+
+Save a long git log command and run it with a short name.
+
+```bash
+koda a "git log --oneline --graph --decorate --all" -t git -s glog
+koda x glog
+```
+
+**2. Tag the current commit and push it**
+
+Save a one-liner that tags HEAD and pushes the tag in one step.
+
+```bash
+koda a "git tag \$1 \$(git rev-parse --short HEAD) && git push origin \$1" -t git -s tag-push
+koda x tag-push -V v1.2.3
+```
+
+---
+
+### Docker / Kubernetes
+
+**3. Capture a container's IP and reuse it immediately**
+
+Pipe `docker inspect` output into koda, then embed the saved value with `$(koda r)`.
+
+```bash
+docker inspect app | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker
+curl http://$(koda r):3000/healthz
+```
+
+**4. Restart any Kubernetes deployment**
+
+Save a rollout restart command with a named placeholder for the service.
+
+```bash
+koda a "kubectl rollout restart deployment/\${svc} -n production" -t k8s -s k8s-restart
+koda x k8s-restart -V svc=api-gateway
+```
+
+**5. Port-forward to any service**
+
+Save a kubectl port-forward template; supply service and port at call time.
+
+```bash
+koda a "kubectl port-forward svc/\${svc} \${port}:80 -n production" -t k8s -s pf
+koda x pf -V svc=api,port=8080
+```
+
+**6. Tail error logs from any deployment**
+
+Save a kubectl log pipeline and run it against any service.
+
+```bash
+koda a "kubectl logs deploy/\${svc} --tail=200 | grep ERROR" -t k8s -s k8s-errors
+koda x k8s-errors -V svc=api
+```
+
+---
+
+### Cloud
+
+**7. Sync a build artifact to any S3 bucket**
+
+Save an `aws s3 sync` command and swap the bucket name at call time.
+
+```bash
+koda a "aws s3 sync ./dist s3://\${bucket}/app/ --delete --profile prod" -t aws -s s3-sync
+koda x s3-sync -V bucket=my-staging-frontend
+```
+
+**8. Start an SSM session on any EC2 instance**
+
+Save the SSM command with the instance ID as a positional placeholder.
+
+```bash
+koda a "aws ssm start-session --target \$1 --region ap-northeast-1" -t aws -s ssm
+koda x ssm -V i-0abc1234567def890
+```
+
+**9. Save a generated instance ID and reuse it**
+
+Pipe the ID from `aws ec2 run-instances` into koda, then pass it to follow-up commands.
+
+```bash
+aws ec2 run-instances ... | jq -r '.Instances[0].InstanceId' | koda a -t aws -s new-instance
+koda x ssm -V $(koda r new-instance)
+```
+
+---
+
+### System ops
+
+**10. Tail a deeply nested log file**
+
+Save a long log path once and embed it in any command with `$(koda r)`.
+
+```bash
+koda a "/home/deploy/apps/myservice/logs/app.log" -t log -s app-log
+tail -f $(koda r app-log)
+```
+
+**11. SSH to any server with one template**
+
+Save an SSH command with the host as a positional placeholder.
+
+```bash
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1" -t ssh -s ec2
+koda x ec2 -V 10.0.1.42
+```
+
+**12. Sync a local directory to a remote server**
+
+Save an rsync command with a named host placeholder.
+
+```bash
+koda a "rsync -avz --progress ./dist deploy@\${host}:/var/www/html/" -t deploy -s rsync-deploy
+koda x rsync-deploy -V host=prod.example.com
+```
+
+**13. Create a dated backup on every run**
+
+Escape `\$(date)` so it expands at exec time, not at save time.
+
+```bash
+koda a "tar czf ~/backups/src-\$(date +%Y%m%d-%H%M).tar.gz ./src" -t backup -s backup
+koda x backup   # creates src-20260505-1430.tar.gz each time
+```
+
+---
+
+### Development
+
+**14. Open an internal dashboard in the browser**
+
+Save an internal URL and open it without typing the full address.
+
+```bash
+koda a "https://internal.grafana.example.com/d/abc123/dashboard" -t url -s grafana
+xdg-open $(koda r grafana)
+```
+
+**15. Connect to a database instantly**
+
+Save a psql connection string for one-command access.
+
+```bash
+koda a "psql postgres://admin@db.internal:5432/myapp" -t db -s db
+koda x db
+```
+
+**16. Convert video with a saved ffmpeg preset**
+
+Save an ffmpeg encode command with source and output as positional placeholders.
+
+```bash
+koda a "ffmpeg -i \$1 -vcodec libx264 -crf 23 \$2" -t media -s h264
+koda x h264 -V input.mov,output.mp4
+```
+
+**17. Query a local LLM from the terminal**
+
+Save a curl-based request template via heredoc; supply the prompt at call time.
+
+```bash
+koda a -t llm -s ask <<'EOF'
+curl -sS http://localhost:11434/api/generate \
+  -d '{"model":"llama3","prompt":"$1","stream":false}' | jq -r .response
+EOF
+koda x ask -V "Explain HTTP/2 server push"
+```
+
+**18. Append a saved snippet to a project file**
+
+Store a reusable multi-line fragment and stream it directly into a file with `koda r`.
+
+```bash
+koda a -t infra -s pybase <<'EOF'
+FROM python:3.12-slim
+RUN pip install uv
+WORKDIR /app
+EOF
+koda r pybase >> Dockerfile
+```
+
+---
+
+### Cross-machine
+
+**19. Share your public SSH key across machines**
+
+Save the key on machine A, push it, then pull and retrieve it on any other machine.
+
+```bash
+# Machine A
+koda a "$(cat ~/.ssh/id_ed25519.pub)" -t ssh -s pubkey
+koda push
+
+# Machine B
+koda pull
+koda r pubkey   # paste into authorized_keys or GitHub
+```
+
+**20. Keep reusable commands in sync across machines**
+
+Build a library of snippets on one machine and make them available everywhere via Git sync.
+
+```bash
+# Machine A — build the library
+koda a "kubectl rollout restart deployment/\${svc} -n production" -t k8s -s k8s-restart
+koda a "aws ssm start-session --target \$1 --region ap-northeast-1" -t aws -s ssm
+koda push
+
+# Machine B — pull and run immediately
+koda pull
+koda x k8s-restart -V svc=worker
+```
+
+---
+
 ## License
 
 MIT (c) 2026 ngt22
