@@ -20,16 +20,15 @@ A **terminal launcher, snippet store, and cross-machine clipboard**. Save comman
 
 ## In action
 
-**① A 60-character command becomes two tokens:**
+**① A verbose command becomes two tokens:**
 
 ```bash
 # Save the verbose command once
-koda a "docker run --rm -it -v \$(pwd):/app -w /app -p 8080:8080 node:20-alpine sh" \
-  -t docker -s devbox
+koda a "git log --oneline --graph --decorate --all" -t git -s glog
 
 # From now on, just:
 koda x 1        # run by index
-koda x devbox   # or by shortcut
+koda x glog     # or by shortcut
 ```
 
 **② A deep path lives in one place, works everywhere:**
@@ -324,6 +323,19 @@ EOF
 # Ask anything — no copy-paste, no editing
 koda x ask -V "How high is Mt. Fuji?"
 koda x ask -V "Summarize the last git commit"
+```
+
+**Deferred command substitution — `\$()` expands at exec time, not at save time:**
+
+When you escape `$` with a backslash in `koda a "..."`, the shell stores the literal text `$(...)` unchanged. `koda x` then passes it to the shell, which evaluates it at that moment. This is useful for values that change on every run.
+
+```bash
+# Save once — \$() is stored literally
+koda a "tar czf ~/backups/src-\$(date +%Y%m%d-%H%M).tar.gz ./src" -t backup -s backup
+
+# Each invocation stamps the current date and time
+koda x backup   # runs: tar czf ~/backups/src-20260505-1430.tar.gz ./src
+koda x backup   # runs: tar czf ~/backups/src-20260506-0910.tar.gz ./src
 ```
 
 > **Security**: only store trusted commands. `exec` runs the body through the configured shell (`sh` by default).
