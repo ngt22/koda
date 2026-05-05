@@ -910,11 +910,49 @@ koda a "tar czf ~/backups/src-\$(date +%Y%m%d-%H%M).tar.gz ./src" -t backup -s b
 koda x backup   # creates src-20260505-1430.tar.gz each time
 ```
 
+**14. Pick a saved host with fzf and substitute it into a command**
+
+Register IP addresses with a `host` tag. Use `koda p -r -t host` to pick one interactively and pass it as a variable into any command template. Or save the full command per host and use `koda p -x` to pick and run in one step.
+
+```bash
+# Register IP addresses once
+koda a "10.0.1.10" -t host -s web-1
+koda a "10.0.1.11" -t host -s web-2
+koda a "10.0.1.20" -t host -s db-1
+koda a "10.0.1.30" -t host -s bastion
+```
+
+**Pattern A — template + pick**: save a command once with `$1`, pick the IP at run time.
+
+```bash
+# Save a long command template once
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@\$1 'sudo journalctl -u app -n 100 -f'" -t ssh -s taillog
+
+# Open fzf filtered to the host tag, pick a host, run the command
+koda x taillog -V $(koda p -r -t host)
+```
+
+`koda p -r -t host` opens fzf showing only `host` entries; selecting one prints the IP, which `-V` passes as `$1`.
+
+**Pattern B — one entry per host, pick and exec**: save the full command for each host, then use `koda p -x` to pick and execute in one step.
+
+```bash
+# Save the full command for each host
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.10 'sudo journalctl -u app -n 100 -f'" -t ssh -s web-1-log
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.11 'sudo journalctl -u app -n 100 -f'" -t ssh -s web-2-log
+koda a "ssh -i ~/.ssh/prod.pem ec2-user@10.0.1.30 'sudo journalctl -u app -n 100 -f'" -t ssh -s bastion-log
+
+# Pick from the ssh entries and execute immediately
+koda p -x -t ssh
+```
+
+`koda p -x -t ssh` opens fzf pre-filtered to the `ssh` tag; pressing Enter executes the selected entry directly.
+
 ---
 
 ### Development
 
-**14. Open an internal dashboard in the browser**
+**15. Open an internal dashboard in the browser**
 
 Save an internal URL and open it without typing the full address.
 
@@ -923,7 +961,7 @@ koda a "https://internal.grafana.example.com/d/abc123/dashboard" -t url -s grafa
 xdg-open $(koda r grafana)
 ```
 
-**15. Connect to a database instantly**
+**16. Connect to a database instantly**
 
 Save a psql connection string for one-command access.
 
@@ -932,7 +970,7 @@ koda a "psql postgres://admin@db.internal:5432/myapp" -t db -s db
 koda x db
 ```
 
-**16. Convert video with a saved ffmpeg preset**
+**17. Convert video with a saved ffmpeg preset**
 
 Save an ffmpeg encode command with source and output as positional placeholders.
 
@@ -941,7 +979,7 @@ koda a "ffmpeg -i \$1 -vcodec libx264 -crf 23 \$2" -t media -s h264
 koda x h264 -V input.mov,output.mp4
 ```
 
-**17. Query a local LLM from the terminal**
+**18. Query a local LLM from the terminal**
 
 Save a curl-based request template via heredoc; supply the prompt at call time.
 
@@ -953,7 +991,7 @@ EOF
 koda x ask -V "Explain HTTP/2 server push"
 ```
 
-**18. Append a saved snippet to a project file**
+**19. Append a saved snippet to a project file**
 
 Store a reusable multi-line fragment and stream it directly into a file with `koda r`.
 
@@ -970,7 +1008,7 @@ koda r pybase >> Dockerfile
 
 ### Cross-machine
 
-**19. Share your public SSH key across machines**
+**20. Share your public SSH key across machines**
 
 Save the key on machine A, push it, then pull and retrieve it on any other machine.
 
@@ -984,7 +1022,7 @@ koda pull
 koda r pubkey   # paste into authorized_keys or GitHub
 ```
 
-**20. Keep reusable commands in sync across machines**
+**21. Keep reusable commands in sync across machines**
 
 Build a library of snippets on one machine and make them available everywhere via Git sync.
 
