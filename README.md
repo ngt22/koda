@@ -1,20 +1,27 @@
 # koda-cli
 
-A **terminal launcher, snippet store, and cross-machine clipboard**. Save commands, config templates, notes, and any text to SQLite; retrieve and execute them instantly — by index, shortcut, or fuzzy search. Sync via a private Git repository to share the same store across machines. Built with Python, Typer, and Rich.
+A **text store** for the terminal. Save any text — commands, paths, templates, notes — to SQLite and recall it instantly by index, shortcut, or fuzzy search. Saved entries can be executed as shell commands, making koda a **terminal launcher**. Sync via a private Git repository to share the same store across machines, giving you a **cross-machine clipboard** that works from any terminal. Built with Python, Typer, and Rich.
 
 ## Features
 
-- **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
-- **Command substitution**: Embed stored values directly in any command — `ssh $(koda r bastion)`, `tail -f $(koda r log-path)`.
-- **Fast save and recall**: `add`, `list`, `show`, `edit`, `pick`, `remove` — all with one-letter aliases.
+**Core**
+
+- **Save and recall**: `add`, `list`, `show`, `edit`, `pick`, `remove` — all with one-letter aliases. Save any text and retrieve it instantly by index, shortcut, or fuzzy search.
 - **Flexible input**: Arguments, heredocs, pipes, or `$EDITOR`.
 - **Shortcuts**: Assign a memorable string alias to any entry and use it in place of a numeric index.
-- **Variable substitution**: Expand `${KEY}` and `$1 $2 ...` placeholders at recall time with `-V`.
-- **Shell-friendly output**: `raw` prints body-only text for pipes, `eval`, and scripts.
 - **Tags**: Classify, filter, and batch-edit entries with multiple tags.
-- **Display index**: Stable `uid` (SHA1 short hash) plus user-controlled `idx`. Reorder with `move`/`swap`; close gaps with `compact`.
-- **Terminal clipboard**: Save any text with `koda a`, recall it instantly with `koda r` or `koda s` — paste into prompts, commands, or scripts without retyping.
+- **Shell-friendly output**: `raw` prints body-only text for pipes, `eval`, and scripts.
+
+**Convenient features**
+
+- **Launcher**: Run any saved command with `exec` or `pick`, with variable substitution at call time.
+- **Command substitution**: Embed stored values directly in any command — `ssh $(koda r bastion)`, `tail -f $(koda r log-path)`.
+- **Variable substitution**: Expand `${KEY}` and `$1 $2 ...` placeholders at recall time with `-V`.
+
+**Other**
+
 - **Cross-machine sync**: Push and pull via a private Git repository — the same store is available from every terminal, on every machine.
+- **Display index**: Stable `uid` (SHA1 short hash) plus user-controlled `idx`. Reorder with `move`/`swap`; close gaps with `compact`.
 - **XDG-friendly**: Data under `~/.local/share/koda/`, config under `~/.config/koda/`.
 - **Configurable defaults**: Persist preferences in `~/.config/koda/config.toml`.
 
@@ -43,8 +50,6 @@ grep "ERROR" $(koda r app-log) | tail -20
 less +F $(koda r 2)   # same thing, by index
 ```
 
----
-
 **③ One template, any target — variable substitution at call time:**
 
 ```bash
@@ -66,8 +71,6 @@ docker inspect app | jq -r '.[0].NetworkSettings.IPAddress' | koda a -t docker
 curl http://$(koda r):3000/healthz
 psql postgres://postgres@$(koda r):5432/mydb
 ```
-
----
 
 **⑤ Build a command library once — run it on every machine:**
 
@@ -94,23 +97,23 @@ koda x prod-log -V 10.0.1.42
 
 | Command | Alias | Description |
 |---|---|---|
-| `add` | `a` | Save a new entry |
-| `raw` | `r` | Print entry body to stdout |
-| `list` | `l` | List and filter entries |
-| `exec` | `x` | Run a saved entry as a shell command |
-| `edit` | `e` | Open entry in `$EDITOR` |
-| `pick` | `p` | Interactive selector (requires fzf) |
-| `show` | `s` | Display entry with full metadata |
-| `remove` | `d` | Delete entries |
-| `copy` | `c` | Duplicate an entry |
-| `tag` | `t` | Batch-add or remove tags |
-| `move` | `m` | Move entry to a display index |
-| `swap` | `w` | Swap display positions of two entries |
-| `shift` | `h` | Shift entries up or down by N |
-| `compact` | `k` | Reassign indices to 0..n-1 |
-| `config` | `g` | Read/write configuration |
-| `push` | — | Export DB to Git sync repo and push |
-| `pull` | — | Pull Git sync repo and merge into local DB |
+| [`add`](#add) | `a` | Save a new entry |
+| [`raw`](#raw--body-only-output) | `r` | Print entry body to stdout |
+| [`list`](#list) | `l` | List and filter entries |
+| [`exec`](#execute-exec--run-a-saved-command) | `x` | Run a saved entry as a shell command |
+| [`edit`](#edit) | `e` | Open entry in `$EDITOR` |
+| [`pick`](#pick--interactive-launcher-fzf) | `p` | Interactive selector (requires fzf) |
+| [`show`](#show) | `s` | Display entry with full metadata |
+| [`remove`](#remove) | `d` | Delete entries |
+| [`copy`](#copy) | `c` | Duplicate an entry |
+| [`tag`](#tag) | `t` | Batch-add or remove tags |
+| [`move`](#reorder-entries-move-swap-shift-compact) | `m` | Move entry to a display index |
+| [`swap`](#reorder-entries-move-swap-shift-compact) | `w` | Swap display positions of two entries |
+| [`shift`](#reorder-entries-move-swap-shift-compact) | `h` | Shift entries up or down by N |
+| [`compact`](#reorder-entries-move-swap-shift-compact) | `k` | Reassign indices to 0..n-1 |
+| [`config`](#configuration-config) | `g` | Read/write configuration |
+| [`push`](#push-and-pull) | — | Export DB to Git sync repo and push |
+| [`pull`](#push-and-pull) | — | Pull Git sync repo and merge into local DB |
 
 Single-letter aliases are reserved and cannot be used as entry shortcuts.
 
@@ -158,7 +161,7 @@ Save a new entry from arguments, heredoc, stdin, or `$EDITOR`.
 
 ```bash
 koda a "docker compose up --build" -t docker -s dc
-koda a "YOUR_TEXT_HERE" -t work
+koda a "npm run dev" -t work
 koda a              # opens $EDITOR
 ```
 
@@ -179,14 +182,6 @@ history | grep ffmpeg | tail -1 | koda a -t ffmpeg
 kubectl get pods -o wide    | koda a -t k8s
 ```
 
-Full form and aliases:
-
-```bash
-koda add "YOUR_TEXT_HERE" -t tag --shortcut sc   # long form
-kd a "YOUR_TEXT_HERE" -t tag -s sc               # kd prefix (alias kd='koda')
-ka "YOUR_TEXT_HERE" -t tag -s sc                  # two-letter alias
-```
-
 ---
 
 ### Raw — body-only output
@@ -198,14 +193,6 @@ koda r web-srv        # by shortcut
 koda r 5              # by index
 koda r                # latest entry
 echo 5 | koda r       # ref from stdin
-```
-
-Full form and aliases:
-
-```bash
-koda raw web-srv   # long form
-kd r web-srv       # kd prefix
-kr web-srv         # two-letter alias
 ```
 
 **Command substitution — embed a stored value inside any command:**
@@ -272,14 +259,6 @@ koda l --columns idx,uid,sc,tags,content,created_at   # all columns
 koda l --columns idx,content    # minimal view
 ```
 
-Full form and aliases:
-
-```bash
-koda list -q docker -t dev   # long form
-kd l -q docker -t dev        # kd prefix
-kl -q docker -t dev          # two-letter alias
-```
-
 Default columns: `IDX`, `SC`, `Tags`, `Content`. Available columns: `idx`, `uid`, `sc`, `tags`, `content`, `created_at` (`idx` is required).
 Sort columns: `id`, `idx`, `uid`, `tags`, `content`, `created_at`, `modified_at`, `shortcut`.
 
@@ -301,14 +280,6 @@ koda a "ssh -i ~/.ssh/key.pem ec2-user@\$1" -t ssh -s web-srv
 koda x web-srv              # run by shortcut
 koda x web-srv -V prod      # with variable substitution
 koda x 12                   # run by index
-```
-
-Full form and aliases:
-
-```bash
-koda exec web-srv -V localhost   # long form
-kd x web-srv -V localhost        # kd prefix
-kx web-srv -V localhost          # two-letter alias
 ```
 
 **Workflow example — query a local LLM with a one-liner:**
@@ -353,14 +324,6 @@ koda e web-srv        # by shortcut
 koda e 5              # by index
 ```
 
-Full form and aliases:
-
-```bash
-koda edit web-srv   # long form
-kd e web-srv        # kd prefix
-ke web-srv          # two-letter alias
-```
-
 ---
 
 ### Pick — interactive launcher (fzf)
@@ -370,14 +333,6 @@ Interactively select an entry with `fzf`, then run an action. Requires [`fzf`](h
 ```bash
 koda p -x                      # pick from all entries, execute immediately
 koda p -x -q docker -t dev     # pre-filter by query and tag, then pick
-```
-
-Full form and aliases:
-
-```bash
-koda pick --exec -q docker -t dev   # long form
-kd p -x -q docker -t dev            # kd prefix
-kp -x -q docker -t dev              # two-letter alias
 ```
 
 **Compound patterns — use pick as a selector:**
@@ -405,14 +360,6 @@ koda s 5              # by index
 echo 5 | koda s       # ref from stdin
 ```
 
-Full form and aliases:
-
-```bash
-koda show web-srv   # long form
-kd s web-srv        # kd prefix
-ks web-srv          # two-letter alias
-```
-
 ---
 
 ### Remove
@@ -428,14 +375,6 @@ koda d -q "tmp"             # delete entries matching body substring
 koda d --all -f             # delete everything (--all always requires -f)
 ```
 
-Full form and aliases:
-
-```bash
-koda remove web-srv   # long form
-kd d web-srv          # kd prefix
-kd web-srv            # two-letter alias (kd = koda remove)
-```
-
 ---
 
 ### Copy
@@ -447,14 +386,6 @@ koda c web-srv        # by shortcut
 koda c 5              # by index
 ```
 
-Full form and aliases:
-
-```bash
-koda copy web-srv   # long form
-kd c web-srv        # kd prefix
-kc web-srv          # two-letter alias
-```
-
 ---
 
 ### Tag
@@ -464,14 +395,6 @@ koda t 1 3 5 -t work          # add tag to individual entries
 koda t 2-6 -t archive         # add tag to a range
 koda t 1 3-5 7 -T old         # remove tag from mixed selection
 koda t 1 -t new -T old        # add one tag and remove another in one command
-```
-
-Full form and aliases:
-
-```bash
-koda tag 1 3-5 -t archive   # long form
-kd t 1 3-5 -t archive       # kd prefix
-kt 1 3-5 -t archive         # two-letter alias
 ```
 
 Re-tagging with an already-present tag is idempotent (no-op).
@@ -491,15 +414,6 @@ koda h 5 -n -1    # shift entries from index 5 downward by 1
 koda k            # reassign all indices to 0..n-1, fill gaps
 ```
 
-Full form and aliases:
-
-```bash
-koda swap 3 0    kd w 3 0    kw 3 0
-koda move 7 1    kd m 7 1    km 7 1
-koda shift 1     kd h 1      kh 1
-koda compact     kd k        kk
-```
-
 `move` requires the destination index to be unoccupied. Use `shift` to make room first, or `swap` to exchange two occupied positions.
 
 ---
@@ -514,14 +428,6 @@ koda g unset list.per_page       # remove key (reverts to built-in default)
 koda g reset -f                  # delete config file without prompt
 koda g edit                      # open config in $EDITOR
 koda g path                      # print config file path
-```
-
-Full form and aliases:
-
-```bash
-koda config set defaults.cmd list   # long form
-kd g set defaults.cmd list          # kd prefix
-kg set defaults.cmd list            # two-letter alias
 ```
 
 ---
@@ -628,7 +534,7 @@ alias kd='koda'
 Usage with kd prefix:
 
 ```bash
-kd a "YOUR_TEXT_HERE" -t tag -s sc    # add
+kd a "npm run dev" -t work            # add
 kd l -q docker                        # list
 kd s web-srv                # show
 kd e web-srv                # edit
